@@ -55,7 +55,16 @@ void SplashSetColor(float r, float g, float b) {
 }
 
 void SplashShow(const char *status) {
-    if (splashWindow) return;
+    if (splashWindow) {
+        // Already shown: repurpose the window for the new phase rather than
+        // ignoring the call, matching the Windows behaviour.
+        [statusLabel setStringValue:[NSString stringWithUTF8String:status]];
+        [progressBar setDoubleValue:0.0];
+        [progressBar setHidden:YES];
+        [CATransaction flush];
+        pumpEvents();
+        return;
+    }
     ensureApp();
 
     // ── Window: borderless, rounded, floating ──
