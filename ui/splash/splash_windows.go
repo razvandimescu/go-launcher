@@ -224,6 +224,7 @@ type winSplash struct {
 	accentARGB uint32
 
 	mu          sync.Mutex
+	running     bool
 	statusText  string
 	progressPct float64
 
@@ -264,6 +265,19 @@ func newPlatform(cfg Config) *winSplash {
 func (s *winSplash) ShowSplash(status string) {
 	s.mu.Lock()
 	s.statusText = status
+	s.progressPct = 0
+	if s.running {
+		// A window is already up — repurpose it for the new phase rather
+		// than spawning a second run() goroutine that would clobber the
+		// shared GDI+ state and leak the existing window.
+		hwnd := s.hwnd
+		s.mu.Unlock()
+		if hwnd != 0 {
+			pPostMessage.Call(hwnd, wmAppUpdate, 0, 0)
+		}
+		return
+	}
+	s.running = true
 	s.mu.Unlock()
 	go s.run()
 }
@@ -398,6 +412,9 @@ func (s *winSplash) shutdownGDIPlus() {
 			pDeleteObject.Call(s.memBitmap)
 		}
 		pDeleteDC.Call(s.memDC)
+		// Zero so a subsequent run() lazily recreates the buffer in paint()
+		// instead of drawing into freed handles.
+		s.memDC, s.memBitmap, s.oldBitmap = 0, 0, 0
 	}
 }
 
@@ -490,6 +507,16 @@ func (s *winSplash) run() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
+	// Clear running/hwnd last, after shutdownGDIPlus has freed the shared
+	// resources, so the next ShowSplash starts a clean run() rather than
+	// racing this teardown.
+	defer func() {
+		s.mu.Lock()
+		s.running = false
+		s.hwnd = 0
+		s.mu.Unlock()
+	}()
+
 	s.initGDIPlus()
 	defer s.shutdownGDIPlus()
 
@@ -539,7 +566,9 @@ func (s *winSplash) run() {
 		x, y, winW, winH,
 		0, 0, hInstance, 0,
 	)
+	s.mu.Lock()
 	s.hwnd = hwnd
+	s.mu.Unlock()
 
 	rgn, _, _ := pCreateRoundRectRgn.Call(0, 0, winW+1, winH+1, cornerRadius*2, cornerRadius*2)
 	pSetWindowRgn.Call(hwnd, rgn, 1)
