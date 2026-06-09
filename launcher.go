@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -136,6 +137,12 @@ func (l *Launcher) Run(ctx context.Context) int {
 		slog.Error("failed to create data directory", "error", err)
 		return 1
 	}
+
+	// Persist logs to a file now that DataDir exists — stderr is lost on a
+	// console-less GUI/login-item process, so this is the only record of
+	// bootstrap/update failures.
+	closeLog := setupFileLogging(filepath.Join(l.cfg.DataDir, "launcher.log"))
+	defer closeLog()
 
 	// Acquire singleton lock
 	l.lock = newLockfile(l.cfg.DataDir)
@@ -275,7 +282,13 @@ func (l *Launcher) handleCrashThreshold() (crashAction, int) {
 		return actionContinue, 0
 	}
 
-	if hasPreviousVersion(l.cfg.DataDir) && l.state.RolledBackFrom != l.state.PreviousVersion {
+	// RolledBackFrom == "" means we have never rolled back, so a previous
+	// version on disk is fair game. Without that clause an unknown-version
+	// install (manually seeded, or bootstrapped with no recorded version)
+	// has RolledBackFrom == PreviousVersion == "" and the guard would
+	// wrongly skip a perfectly good previous/ binary, exiting forever.
+	rollbackAllowed := l.state.RolledBackFrom == "" || l.state.RolledBackFrom != l.state.PreviousVersion
+	if hasPreviousVersion(l.cfg.DataDir) && rollbackAllowed {
 		slog.Warn("crash threshold reached, rolling back",
 			"crash_count", l.state.CrashCount,
 			"from", l.state.CurrentVersion,
