@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 const (
@@ -17,7 +16,6 @@ const (
 	heartbeatFile     = "heartbeat"
 	shutdownFile      = "shutdown_requested"
 	pendingUpdateFile = "pending_update.json"
-	stateFile         = "launcher.json"
 )
 
 var envVarOverride string
@@ -72,45 +70,6 @@ func RequestShutdown() error {
 
 	path := filepath.Join(dir, shutdownFile)
 	return os.WriteFile(path, []byte(""), 0600)
-}
-
-// launcherState mirrors only the field(s) child needs from the launcher's
-// state file (launcher.json) — shared between UpdateCooldownActive and its
-// test so the JSON tag can't drift between production and test code.
-type launcherState struct {
-	UpdateCooldownUntil time.Time `json:"update_cooldown_until"`
-}
-
-// UpdateCooldownActive reports whether the launcher is currently pausing
-// update attempts after repeated download failures (e.g. a firewall
-// permanently blocking the download source). Call this before deciding to
-// fetch release metadata and call RequestUpdate — skipping the check while
-// a persistent failure is being backed off avoids piling more failed
-// attempts onto the same cooldown window and needlessly re-triggering the
-// exit-for-update/restart cycle on every startup.
-//
-// This reads only the single field it needs from the launcher's state
-// file, deliberately not importing the parent launcher package (which
-// pulls in UI/registrar dependencies this zero-dependency package avoids).
-// Returns false (not managed, or state unreadable) rather than erroring —
-// callers should treat that as "no reason to skip."
-func UpdateCooldownActive() bool {
-	dir := StateDir()
-	if dir == "" {
-		return false
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, stateFile))
-	if err != nil {
-		return false
-	}
-
-	var s launcherState
-	if err := json.Unmarshal(data, &s); err != nil {
-		return false
-	}
-
-	return time.Now().Before(s.UpdateCooldownUntil)
 }
 
 // RequestUpdate signals the launcher to download and install a new version,

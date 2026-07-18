@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestIsManaged(t *testing.T) {
@@ -84,47 +83,6 @@ func TestRequestUpdate(t *testing.T) {
 	// Verify shutdown_requested also exists
 	if _, err := os.Stat(filepath.Join(dir, shutdownFile)); err != nil {
 		t.Error("shutdown file should also exist after RequestUpdate")
-	}
-}
-
-func writeLauncherState(t *testing.T, dir string, cooldownUntil time.Time) {
-	t.Helper()
-	data, err := json.Marshal(launcherState{UpdateCooldownUntil: cooldownUntil})
-	if err != nil {
-		t.Fatalf("marshal state: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, stateFile), data, 0600); err != nil {
-		t.Fatalf("write state: %v", err)
-	}
-}
-
-func TestUpdateCooldownActive(t *testing.T) {
-	dir := t.TempDir()
-	SetEnvVar("TEST_CHILD_STATE_DIR")
-	os.Setenv("TEST_CHILD_STATE_DIR", dir)
-	defer os.Unsetenv("TEST_CHILD_STATE_DIR")
-
-	if UpdateCooldownActive() {
-		t.Error("should not be active with no state file")
-	}
-
-	writeLauncherState(t, dir, time.Now().Add(time.Hour))
-	if !UpdateCooldownActive() {
-		t.Error("should be active when cooldown_until is in the future")
-	}
-
-	writeLauncherState(t, dir, time.Now().Add(-time.Hour))
-	if UpdateCooldownActive() {
-		t.Error("should not be active when cooldown_until is in the past")
-	}
-}
-
-func TestUpdateCooldownActiveNotManaged(t *testing.T) {
-	SetEnvVar("TEST_CHILD_STATE_DIR")
-	os.Unsetenv("TEST_CHILD_STATE_DIR")
-
-	if UpdateCooldownActive() {
-		t.Error("should be false when not managed")
 	}
 }
 

@@ -196,7 +196,6 @@ func (l *Launcher) Run(ctx context.Context) int {
 	recoverInterruptedSwap(l.cfg.DataDir)
 
 	l.expireStaleCrashStateAtStartup()
-	l.expireStaleUpdateFailureStateAtStartup()
 
 	// Ensure version directories exist
 	if err := ensureVersionDirs(l.cfg.DataDir); err != nil {
@@ -500,21 +499,6 @@ func (l *Launcher) expireStaleCrashStateAtStartup() {
 	}
 	if err := saveState(l.cfg.DataDir, l.state); err != nil {
 		slog.Warn("failed to persist crash window reset", "error", err)
-	}
-}
-
-// expireStaleUpdateFailureStateAtStartup clears a saturated update-failure
-// count (and any cooldown) carried over from a prior session — needed for
-// the same reason as expireStaleCrashStateAtStartup: recordUpdateFailure's
-// own window-expiry never gets a chance to run before the next failure.
-func (l *Launcher) expireStaleUpdateFailureStateAtStartup() {
-	now := time.Now()
-	if !expireStaleWindow(&l.state.UpdateFailureCount, &l.state.UpdateFailureWindowStart, l.cfg.UpdateFailureWindow, now) {
-		return
-	}
-	l.state.UpdateCooldownUntil = time.Time{}
-	if err := saveState(l.cfg.DataDir, l.state); err != nil {
-		slog.Warn("failed to persist update-failure window reset", "error", err)
 	}
 }
 
