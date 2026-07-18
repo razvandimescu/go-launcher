@@ -9,12 +9,15 @@ import (
 )
 
 var (
-	defaultBackoff           = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second}
-	defaultCrashThreshold    = 3
-	defaultProbationDuration = 10 * time.Minute
-	defaultKillTimeout       = 30 * time.Second
-	defaultCrashWindow       = 5 * time.Minute
-	defaultHeartbeatPoll     = 500 * time.Millisecond
+	defaultBackoff             = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second}
+	defaultCrashThreshold      = 3
+	defaultProbationDuration   = 10 * time.Minute
+	defaultKillTimeout         = 30 * time.Second
+	defaultCrashWindow         = 5 * time.Minute
+	defaultHeartbeatPoll       = 500 * time.Millisecond
+	defaultUpdateFailThreshold = 3
+	defaultUpdateFailWindow    = 5 * time.Minute
+	defaultUpdateFailCooldown  = 15 * time.Minute
 )
 
 // Config configures the launcher behavior.
@@ -42,6 +45,20 @@ type Config struct {
 	ProbationDuration time.Duration   // new version probation (default: 10min)
 	KillTimeout       time.Duration   // SIGTERM → SIGKILL escalation (default: 30s)
 	HeartbeatPoll     time.Duration   // heartbeat check interval (default: 500ms)
+
+	// UpdateFailThreshold, UpdateFailWindow, and UpdateFailCooldown govern a
+	// persistently failing update source (e.g. a firewall blocking the
+	// download indefinitely) — without them, a child that requests the same
+	// unreachable update on every startup would spin the launcher in a
+	// tight, unbounded restart loop that never trips the crash/rollback
+	// safety net (a failed download never touches CurrentVersion, so it
+	// isn't tracked as a crash). After UpdateFailThreshold consecutive
+	// failed update attempts within UpdateFailWindow, the launcher stops
+	// attempting the update (running the working current version normally
+	// instead) for UpdateFailCooldown before trying again.
+	UpdateFailThreshold int           // failed attempts before cooldown (default: 3)
+	UpdateFailWindow    time.Duration // window for counting consecutive failures (default: 5min)
+	UpdateFailCooldown  time.Duration // pause on further attempts after threshold (default: 15min)
 
 	// Pluggable components.
 	UI        UI        // nil = headless
@@ -90,6 +107,15 @@ func New(cfg Config) *Launcher {
 	}
 	if cfg.HeartbeatPoll == 0 {
 		cfg.HeartbeatPoll = defaultHeartbeatPoll
+	}
+	if cfg.UpdateFailThreshold == 0 {
+		cfg.UpdateFailThreshold = defaultUpdateFailThreshold
+	}
+	if cfg.UpdateFailWindow == 0 {
+		cfg.UpdateFailWindow = defaultUpdateFailWindow
+	}
+	if cfg.UpdateFailCooldown == 0 {
+		cfg.UpdateFailCooldown = defaultUpdateFailCooldown
 	}
 	return &Launcher{cfg: cfg}
 }
@@ -170,6 +196,7 @@ func (l *Launcher) Run(ctx context.Context) int {
 	recoverInterruptedSwap(l.cfg.DataDir)
 
 	l.expireStaleCrashStateAtStartup()
+	l.expireStaleUpdateFailureStateAtStartup()
 
 	// Ensure version directories exist
 	if err := ensureVersionDirs(l.cfg.DataDir); err != nil {
@@ -251,8 +278,15 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 
 		// Handle exit
 		if shutdownRequested(l.cfg.DataDir) {
-			if shouldContinue := l.handleUpdate(ctx); shouldContinue {
-				crashIndex = 0
+			if shouldContinue, applied := l.handleUpdate(ctx); shouldContinue {
+				if applied {
+					crashIndex = 0
+					continue
+				}
+				// Update failed, or was skipped due to an active cooldown —
+				// back off same as a crash would, so a persistently failing
+				// update source can't spin this into a tight restart loop.
+				crashIndex = l.sleepBackoff(ctx, crashIndex)
 				continue
 			}
 			slog.Info("child requested clean shutdown")
@@ -345,14 +379,27 @@ func (l *Launcher) checkProbation(child *childProcess) {
 }
 
 // handleUpdate checks for a pending update after shutdown was requested.
-// Returns true if the supervisor loop should continue (update applied or failed).
-func (l *Launcher) handleUpdate(ctx context.Context) bool {
+// Returns (shouldContinue, applied): shouldContinue is true if the
+// supervisor loop should continue (update applied, failed, or skipped);
+// applied is true only when the update was actually downloaded and
+// installed — the caller uses this to decide whether to back off before
+// restarting.
+func (l *Launcher) handleUpdate(ctx context.Context) (shouldContinue bool, applied bool) {
 	pending := readPendingUpdate(l.cfg.DataDir)
 	if pending == nil {
-		return false
+		return false, false
 	}
 
 	slog.Info("child requested update", "version", pending.Version)
+
+	if !l.state.UpdateCooldownUntil.IsZero() && time.Now().Before(l.state.UpdateCooldownUntil) {
+		slog.Warn("skipping update attempt — in cooldown after repeated failures",
+			"version", pending.Version,
+			"cooldown_until", l.state.UpdateCooldownUntil)
+		deletePendingUpdate(l.cfg.DataDir)
+		deleteShutdownFile(l.cfg.DataDir)
+		return true, false
+	}
 
 	if l.cfg.UI != nil {
 		l.cfg.UI.ShowSplash("Updating to " + pending.Version + "...")
@@ -361,19 +408,24 @@ func (l *Launcher) handleUpdate(ctx context.Context) bool {
 	if err := performUpdate(ctx, &l.cfg, pending); err != nil {
 		slog.Error("update failed, restarting current version", "error", err)
 		cleanStagingDir(l.cfg.DataDir)
-	} else {
-		l.state.PreviousVersion = l.state.CurrentVersion
-		l.state.CurrentVersion = pending.Version
-		l.state.resetCrashState()
-		l.state.ProbationUntil = time.Now().Add(l.cfg.ProbationDuration)
-		if err := saveState(l.cfg.DataDir, l.state); err != nil {
-			slog.Error("failed to save state after update", "error", err)
-		}
+		l.recordUpdateFailure()
+		deletePendingUpdate(l.cfg.DataDir)
+		deleteShutdownFile(l.cfg.DataDir)
+		return true, false
+	}
+
+	l.state.PreviousVersion = l.state.CurrentVersion
+	l.state.CurrentVersion = pending.Version
+	l.state.resetCrashState()
+	l.state.resetUpdateFailureState()
+	l.state.ProbationUntil = time.Now().Add(l.cfg.ProbationDuration)
+	if err := saveState(l.cfg.DataDir, l.state); err != nil {
+		slog.Error("failed to save state after update", "error", err)
 	}
 
 	deletePendingUpdate(l.cfg.DataDir)
 	deleteShutdownFile(l.cfg.DataDir)
-	return true
+	return true, true
 }
 
 // waitForChild waits for the child to exit, monitoring the heartbeat file
@@ -442,6 +494,61 @@ func (l *Launcher) expireStaleCrashWindow(now time.Time) bool {
 	}
 	l.state.CrashCount = 0
 	l.state.CrashWindowStart = time.Time{}
+	return true
+}
+
+// expireStaleUpdateFailureStateAtStartup clears a saturated update-failure
+// count (and any cooldown) carried over from a prior session — needed for
+// the same reason as expireStaleCrashStateAtStartup: recordUpdateFailure's
+// own window-expiry never gets a chance to run before the next failure.
+func (l *Launcher) expireStaleUpdateFailureStateAtStartup() {
+	if !l.expireStaleUpdateFailureWindow(time.Now()) {
+		return
+	}
+	l.state.UpdateCooldownUntil = time.Time{}
+	if err := saveState(l.cfg.DataDir, l.state); err != nil {
+		slog.Warn("failed to persist update-failure window reset", "error", err)
+	}
+}
+
+// recordUpdateFailure tracks a failed update download, separately from
+// crash tracking (see the State.UpdateFailureCount doc comment). Once
+// UpdateFailThreshold consecutive failures land within UpdateFailWindow, it
+// sets UpdateCooldownUntil so handleUpdate skips further attempts for
+// UpdateFailCooldown instead of retrying the same unreachable source on
+// every restart.
+func (l *Launcher) recordUpdateFailure() {
+	now := time.Now()
+	l.expireStaleUpdateFailureWindow(now)
+
+	l.state.UpdateFailureCount++
+	if l.state.UpdateFailureWindowStart.IsZero() {
+		l.state.UpdateFailureWindowStart = now
+	}
+
+	if l.state.UpdateFailureCount >= l.cfg.UpdateFailThreshold {
+		l.state.UpdateCooldownUntil = now.Add(l.cfg.UpdateFailCooldown)
+		slog.Warn("update failure threshold reached, pausing update attempts",
+			"failures", l.state.UpdateFailureCount,
+			"cooldown_until", l.state.UpdateCooldownUntil)
+	}
+
+	if err := saveState(l.cfg.DataDir, l.state); err != nil {
+		slog.Error("failed to save state after update failure", "error", err)
+	}
+}
+
+// expireStaleUpdateFailureWindow resets update-failure tracking if more
+// than UpdateFailWindow has elapsed since the first recorded failure.
+func (l *Launcher) expireStaleUpdateFailureWindow(now time.Time) bool {
+	if l.state.UpdateFailureWindowStart.IsZero() {
+		return false
+	}
+	if now.Sub(l.state.UpdateFailureWindowStart) <= l.cfg.UpdateFailWindow {
+		return false
+	}
+	l.state.UpdateFailureCount = 0
+	l.state.UpdateFailureWindowStart = time.Time{}
 	return true
 }
 

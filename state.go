@@ -17,6 +17,16 @@ type State struct {
 	CrashWindowStart time.Time `json:"crash_window_start"`
 	LastHealthyAt    time.Time `json:"last_healthy_at"`
 	RolledBackFrom   string    `json:"rolled_back_from"`
+
+	// Update-failure tracking is deliberately separate from crash tracking:
+	// a failed update download never touches CurrentVersion, so there's
+	// nothing to roll back from, and it shouldn't feed the crash/rollback
+	// counters (a persistently unreachable download source isn't a bad
+	// version of the app). Instead, repeated failures earn a cooldown that
+	// pauses further update attempts for a while — see recordUpdateFailure.
+	UpdateFailureCount       int       `json:"update_failure_count"`
+	UpdateFailureWindowStart time.Time `json:"update_failure_window_start"`
+	UpdateCooldownUntil      time.Time `json:"update_cooldown_until"`
 }
 
 // resetCrashState clears crash tracking and probation fields.
@@ -25,6 +35,14 @@ func (s *State) resetCrashState() {
 	s.CrashWindowStart = time.Time{}
 	s.ProbationUntil = time.Time{}
 	s.RolledBackFrom = ""
+}
+
+// resetUpdateFailureState clears update-failure tracking and any active
+// cooldown — called after an update attempt actually succeeds.
+func (s *State) resetUpdateFailureState() {
+	s.UpdateFailureCount = 0
+	s.UpdateFailureWindowStart = time.Time{}
+	s.UpdateCooldownUntil = time.Time{}
 }
 
 const stateFileName = "launcher.json"

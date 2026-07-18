@@ -625,6 +625,80 @@ func main() {
 	}
 }
 
+// failingFetcher always fails Download, simulating a permanently
+// unreachable update source (e.g. a firewall blocking it indefinitely).
+type failingFetcher struct {
+	release Release
+}
+
+func (f *failingFetcher) LatestVersion(_ context.Context) (*Release, error) {
+	return &f.release, nil
+}
+
+func (f *failingFetcher) Download(_ context.Context, _ *Release, _ io.Writer, _ func(float64)) error {
+	return errors.New("simulated permanent download failure")
+}
+
+func TestUpdateFailureBackoffAndCooldown(t *testing.T) {
+	// Child requests the same update on every single invocation (not just
+	// the first) — modeling a persistently-unreachable download source: the
+	// old version keeps starting, keeps seeing "a newer version exists",
+	// and keeps asking to update, forever. Without failure tracking, this
+	// spins the launcher in a tight, unbounded restart loop.
+	binDir, binName := buildChildFromSource(t, `package main
+
+import "os"
+
+func main() {
+	stateDir := os.Getenv("TEST_LAUNCHER_STATE_DIR")
+	if stateDir == "" { os.Exit(1) }
+
+	f, _ := os.Create(stateDir + "/heartbeat")
+	f.Close()
+
+	os.WriteFile(stateDir+"/pending_update.json",
+		[]byte("{\"version\":\"2.0.0\",\"url\":\"https://example.com/v2\",\"checksum\":\"\"}"), 0600)
+	os.WriteFile(stateDir+"/shutdown_requested", []byte(""), 0600)
+}
+`)
+
+	dataDir := t.TempDir()
+	installChild(t, binDir, binName, dataDir, "current")
+	saveState(dataDir, &State{CurrentVersion: "1.0.0"})
+
+	cfg := baseTestConfig(binName, dataDir)
+	cfg.Backoff = []time.Duration{5 * time.Millisecond, 10 * time.Millisecond}
+	cfg.UpdateFailThreshold = 3
+	cfg.UpdateFailWindow = 10 * time.Second
+	cfg.UpdateFailCooldown = 10 * time.Second // long enough to stay active for the rest of this test
+	cfg.Fetcher = &failingFetcher{release: Release{Version: "2.0.0", URL: "https://example.com/v2"}}
+	l := New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	code := l.Run(ctx)
+	if code != 0 {
+		t.Fatalf("expected exit 0 on context cancellation, got %d", code)
+	}
+
+	state, err := loadState(dataDir)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	if state.CurrentVersion != "1.0.0" {
+		t.Errorf("expected current version to remain 1.0.0 (never a successful update), got %q", state.CurrentVersion)
+	}
+	if state.UpdateFailureCount != cfg.UpdateFailThreshold {
+		t.Errorf("expected update failure count to cap at threshold %d once cooldown engages, got %d",
+			cfg.UpdateFailThreshold, state.UpdateFailureCount)
+	}
+	if state.UpdateCooldownUntil.IsZero() || !state.UpdateCooldownUntil.After(time.Now()) {
+		t.Errorf("expected an active cooldown after reaching the failure threshold, got %v", state.UpdateCooldownUntil)
+	}
+}
+
 func TestBootstrapDownload(t *testing.T) {
 	// "empty current dir leftover" regression: a previously interrupted install
 	// can leave versions/current/ as an empty directory, and os.Rename refuses
