@@ -1,6 +1,10 @@
 # Local-only working notes that don't ship with the library
 private-docs/
 
+# Claude Code local config, worktrees, and per-repo guidance
+.claude/
+CLAUDE.md
+
 # Go build artifacts
 *.test
 *.out
