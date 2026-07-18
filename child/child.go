@@ -74,6 +74,13 @@ func RequestShutdown() error {
 	return os.WriteFile(path, []byte(""), 0600)
 }
 
+// launcherState mirrors only the field(s) child needs from the launcher's
+// state file (launcher.json) — shared between UpdateCooldownActive and its
+// test so the JSON tag can't drift between production and test code.
+type launcherState struct {
+	UpdateCooldownUntil time.Time `json:"update_cooldown_until"`
+}
+
 // UpdateCooldownActive reports whether the launcher is currently pausing
 // update attempts after repeated download failures (e.g. a firewall
 // permanently blocking the download source). Call this before deciding to
@@ -98,9 +105,7 @@ func UpdateCooldownActive() bool {
 		return false
 	}
 
-	var s struct {
-		UpdateCooldownUntil time.Time `json:"update_cooldown_until"`
-	}
+	var s launcherState
 	if err := json.Unmarshal(data, &s); err != nil {
 		return false
 	}

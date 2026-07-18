@@ -428,10 +428,13 @@ func installChild(t *testing.T, binDir, binName, dataDir, versionDir string) {
 // Fakes
 // ---------------------------------------------------------------------------
 
-// fakeFetcher serves a pre-built binary for update/bootstrap tests.
+// fakeFetcher serves a pre-built binary for update/bootstrap tests. Set
+// downloadErr to simulate a permanently failing download instead (e.g. a
+// firewall blocking the source) without needing a second fetcher type.
 type fakeFetcher struct {
-	binaryPath string
-	release    Release
+	binaryPath  string
+	release     Release
+	downloadErr error
 }
 
 func (f *fakeFetcher) LatestVersion(_ context.Context) (*Release, error) {
@@ -439,6 +442,9 @@ func (f *fakeFetcher) LatestVersion(_ context.Context) (*Release, error) {
 }
 
 func (f *fakeFetcher) Download(_ context.Context, _ *Release, dst io.Writer, progress func(float64)) error {
+	if f.downloadErr != nil {
+		return f.downloadErr
+	}
 	data, err := os.ReadFile(f.binaryPath)
 	if err != nil {
 		return err
@@ -625,20 +631,6 @@ func main() {
 	}
 }
 
-// failingFetcher always fails Download, simulating a permanently
-// unreachable update source (e.g. a firewall blocking it indefinitely).
-type failingFetcher struct {
-	release Release
-}
-
-func (f *failingFetcher) LatestVersion(_ context.Context) (*Release, error) {
-	return &f.release, nil
-}
-
-func (f *failingFetcher) Download(_ context.Context, _ *Release, _ io.Writer, _ func(float64)) error {
-	return errors.New("simulated permanent download failure")
-}
-
 func TestUpdateFailureBackoffAndCooldown(t *testing.T) {
 	// Child requests the same update on every single invocation (not just
 	// the first) — modeling a persistently-unreachable download source: the
@@ -668,10 +660,13 @@ func main() {
 
 	cfg := baseTestConfig(binName, dataDir)
 	cfg.Backoff = []time.Duration{5 * time.Millisecond, 10 * time.Millisecond}
-	cfg.UpdateFailThreshold = 3
-	cfg.UpdateFailWindow = 10 * time.Second
-	cfg.UpdateFailCooldown = 10 * time.Second // long enough to stay active for the rest of this test
-	cfg.Fetcher = &failingFetcher{release: Release{Version: "2.0.0", URL: "https://example.com/v2"}}
+	cfg.UpdateFailureThreshold = 3
+	cfg.UpdateFailureWindow = 10 * time.Second
+	cfg.UpdateFailureCooldown = 10 * time.Second // long enough to stay active for the rest of this test
+	cfg.Fetcher = &fakeFetcher{
+		release:     Release{Version: "2.0.0", URL: "https://example.com/v2"},
+		downloadErr: errors.New("simulated permanent download failure"),
+	}
 	l := New(cfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -690,9 +685,9 @@ func main() {
 	if state.CurrentVersion != "1.0.0" {
 		t.Errorf("expected current version to remain 1.0.0 (never a successful update), got %q", state.CurrentVersion)
 	}
-	if state.UpdateFailureCount != cfg.UpdateFailThreshold {
+	if state.UpdateFailureCount != cfg.UpdateFailureThreshold {
 		t.Errorf("expected update failure count to cap at threshold %d once cooldown engages, got %d",
-			cfg.UpdateFailThreshold, state.UpdateFailureCount)
+			cfg.UpdateFailureThreshold, state.UpdateFailureCount)
 	}
 	if state.UpdateCooldownUntil.IsZero() || !state.UpdateCooldownUntil.After(time.Now()) {
 		t.Errorf("expected an active cooldown after reaching the failure threshold, got %v", state.UpdateCooldownUntil)

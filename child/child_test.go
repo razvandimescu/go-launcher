@@ -89,9 +89,7 @@ func TestRequestUpdate(t *testing.T) {
 
 func writeLauncherState(t *testing.T, dir string, cooldownUntil time.Time) {
 	t.Helper()
-	data, err := json.Marshal(struct {
-		UpdateCooldownUntil time.Time `json:"update_cooldown_until"`
-	}{UpdateCooldownUntil: cooldownUntil})
+	data, err := json.Marshal(launcherState{UpdateCooldownUntil: cooldownUntil})
 	if err != nil {
 		t.Fatalf("marshal state: %v", err)
 	}
