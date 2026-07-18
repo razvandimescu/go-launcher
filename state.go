@@ -18,12 +18,10 @@ type State struct {
 	LastHealthyAt    time.Time `json:"last_healthy_at"`
 	RolledBackFrom   string    `json:"rolled_back_from"`
 
-	// Update-failure tracking is deliberately separate from crash tracking:
-	// a failed update download never touches CurrentVersion, so there's
-	// nothing to roll back from, and it shouldn't feed the crash/rollback
-	// counters (a persistently unreachable download source isn't a bad
-	// version of the app). Instead, repeated failures earn a cooldown that
-	// pauses further update attempts for a while — see recordUpdateFailure.
+	// Update-failure tracking is deliberately separate from crash tracking: a
+	// failed download never touches CurrentVersion, so there's nothing to roll
+	// back and it mustn't feed the crash/rollback counters. Repeated failures
+	// instead earn a cooldown that pauses updates — see recordUpdateFailure.
 	UpdateFailureCount       int       `json:"update_failure_count"`
 	UpdateFailureWindowStart time.Time `json:"update_failure_window_start"`
 	UpdateCooldownUntil      time.Time `json:"update_cooldown_until"`
