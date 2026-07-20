@@ -21,7 +21,7 @@ type httpFetcher struct {
 func HTTP(releaseURL string, opts ...Option) launcher.Fetcher {
 	f := &httpFetcher{
 		releaseURL: releaseURL,
-		client:     http.DefaultClient,
+		client:     newDefaultClient(),
 	}
 	for _, opt := range opts {
 		opt(f)

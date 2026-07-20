@@ -60,7 +60,7 @@ func GitHubRelease(owner, repo string, opts ...Option) launcher.Fetcher {
 	f := &githubFetcher{
 		owner:  owner,
 		repo:   repo,
-		client: http.DefaultClient,
+		client: newDefaultClient(),
 		apiURL: "https://api.github.com",
 	}
 	for _, opt := range opts {
