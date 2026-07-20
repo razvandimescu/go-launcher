@@ -251,8 +251,14 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 
 		// Handle exit
 		if shutdownRequested(l.cfg.DataDir) {
-			if shouldContinue := l.handleUpdate(ctx); shouldContinue {
+			switch l.handleUpdate(ctx) {
+			case updateApplied:
 				crashIndex = 0
+				continue
+			case updateNotApplied:
+				// Not a crash (CurrentVersion never changed, so nothing to roll
+				// back), but still paced — an unreachable source must not spin.
+				crashIndex = l.sleepBackoff(ctx, crashIndex)
 				continue
 			}
 			slog.Info("child requested clean shutdown")
@@ -275,6 +281,15 @@ const (
 	actionContinue   crashAction = iota // below threshold, proceed
 	actionRolledBack                    // rollback performed, restart loop
 	actionFatal                         // unrecoverable, exit
+)
+
+// updateAction is handleUpdate's result — mirrors the crashAction idiom above.
+type updateAction int
+
+const (
+	updateNone       updateAction = iota // no pending update was found
+	updateApplied                        // downloaded and installed successfully
+	updateNotApplied                     // download failed; current version kept
 )
 
 func (l *Launcher) handleCrashThreshold() (crashAction, int) {
@@ -345,12 +360,14 @@ func (l *Launcher) checkProbation(child *childProcess) {
 }
 
 // handleUpdate checks for a pending update after shutdown was requested.
-// Returns true if the supervisor loop should continue (update applied or failed).
-func (l *Launcher) handleUpdate(ctx context.Context) bool {
+func (l *Launcher) handleUpdate(ctx context.Context) updateAction {
 	pending := readPendingUpdate(l.cfg.DataDir)
 	if pending == nil {
-		return false
+		return updateNone
 	}
+	// Deferred so each branch below states only its distinguishing logic.
+	defer deletePendingUpdate(l.cfg.DataDir)
+	defer deleteShutdownFile(l.cfg.DataDir)
 
 	slog.Info("child requested update", "version", pending.Version)
 
@@ -361,19 +378,18 @@ func (l *Launcher) handleUpdate(ctx context.Context) bool {
 	if err := performUpdate(ctx, &l.cfg, pending); err != nil {
 		slog.Error("update failed, restarting current version", "error", err)
 		cleanStagingDir(l.cfg.DataDir)
-	} else {
-		l.state.PreviousVersion = l.state.CurrentVersion
-		l.state.CurrentVersion = pending.Version
-		l.state.resetCrashState()
-		l.state.ProbationUntil = time.Now().Add(l.cfg.ProbationDuration)
-		if err := saveState(l.cfg.DataDir, l.state); err != nil {
-			slog.Error("failed to save state after update", "error", err)
-		}
+		return updateNotApplied
 	}
 
-	deletePendingUpdate(l.cfg.DataDir)
-	deleteShutdownFile(l.cfg.DataDir)
-	return true
+	l.state.PreviousVersion = l.state.CurrentVersion
+	l.state.CurrentVersion = pending.Version
+	l.state.resetCrashState()
+	l.state.ProbationUntil = time.Now().Add(l.cfg.ProbationDuration)
+	if err := saveState(l.cfg.DataDir, l.state); err != nil {
+		slog.Error("failed to save state after update", "error", err)
+	}
+
+	return updateApplied
 }
 
 // waitForChild waits for the child to exit, monitoring the heartbeat file

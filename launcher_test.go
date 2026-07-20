@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -428,10 +429,13 @@ func installChild(t *testing.T, binDir, binName, dataDir, versionDir string) {
 // Fakes
 // ---------------------------------------------------------------------------
 
-// fakeFetcher serves a pre-built binary for update/bootstrap tests.
+// fakeFetcher serves a pre-built binary for update/bootstrap tests, or fails
+// every download if downloadErr is set.
 type fakeFetcher struct {
-	binaryPath string
-	release    Release
+	binaryPath  string
+	release     Release
+	downloadErr error
+	downloads   atomic.Int64
 }
 
 func (f *fakeFetcher) LatestVersion(_ context.Context) (*Release, error) {
@@ -439,6 +443,10 @@ func (f *fakeFetcher) LatestVersion(_ context.Context) (*Release, error) {
 }
 
 func (f *fakeFetcher) Download(_ context.Context, _ *Release, dst io.Writer, progress func(float64)) error {
+	f.downloads.Add(1)
+	if f.downloadErr != nil {
+		return f.downloadErr
+	}
 	data, err := os.ReadFile(f.binaryPath)
 	if err != nil {
 		return err
@@ -622,6 +630,70 @@ func main() {
 	}
 	if !hasPreviousVersion(dataDir) {
 		t.Error("expected previous/ to exist after update")
+	}
+}
+
+func TestFailedUpdateBacksOff(t *testing.T) {
+	// The child requests the same update on every invocation, not just the
+	// first — modeling a source that is permanently unreachable.
+	binDir, binName := buildChildFromSource(t, `package main
+
+import "os"
+
+func main() {
+	stateDir := os.Getenv("TEST_LAUNCHER_STATE_DIR")
+	if stateDir == "" { os.Exit(1) }
+
+	f, _ := os.Create(stateDir + "/heartbeat")
+	f.Close()
+
+	os.WriteFile(stateDir+"/pending_update.json",
+		[]byte("{\"version\":\"2.0.0\",\"url\":\"https://example.com/v2\",\"checksum\":\"\"}"), 0600)
+	os.WriteFile(stateDir+"/shutdown_requested", []byte(""), 0600)
+}
+`)
+
+	dataDir := t.TempDir()
+	installChild(t, binDir, binName, dataDir, "current")
+	saveState(dataDir, &State{CurrentVersion: "1.0.0"})
+
+	const backoff = 200 * time.Millisecond
+	const runFor = 2 * time.Second
+
+	fetcher := &fakeFetcher{
+		release:     Release{Version: "2.0.0", URL: "https://example.com/v2"},
+		downloadErr: errors.New("simulated permanent download failure"),
+	}
+	cfg := baseTestConfig(binName, dataDir)
+	cfg.Backoff = []time.Duration{backoff}
+	cfg.Fetcher = fetcher
+	l := New(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), runFor)
+	defer cancel()
+
+	if code := l.Run(ctx); code != 0 {
+		t.Fatalf("expected exit 0 on context cancellation, got %d", code)
+	}
+
+	// Each cycle costs at least one backoff, so attempts can't exceed
+	// runFor/backoff by much; unpaced, a cycle is just the child's
+	// spawn-and-exit and the count comes out ~60x higher.
+	attempts := fetcher.downloads.Load()
+	if maxAttempts := int64(runFor/backoff) + 2; attempts > maxAttempts {
+		t.Errorf("expected at most %d download attempts (paced by %v backoff), got %d — retries are not being backed off",
+			maxAttempts, backoff, attempts)
+	}
+	if attempts == 0 {
+		t.Error("expected the update to be attempted at least once")
+	}
+
+	state, err := loadState(dataDir)
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	if state.CurrentVersion != "1.0.0" {
+		t.Errorf("expected current version to remain 1.0.0 (no successful update), got %q", state.CurrentVersion)
 	}
 }
 

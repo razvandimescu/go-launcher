@@ -5,8 +5,23 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"time"
 )
+
+// newDefaultClient bounds the points where an unreachable host would otherwise
+// stall forever. Deliberately no overall Client.Timeout: that would cap the
+// transfer itself, and a release binary may legitimately take minutes.
+func newDefaultClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
+	}
+}
 
 // downloadHTTP downloads from url into dst, reporting progress via the callback.
 // contentLength is used for progress calculation; pass -1 if unknown.
