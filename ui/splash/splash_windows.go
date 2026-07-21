@@ -228,6 +228,10 @@ type winSplash struct {
 	statusText  string
 	progressPct float64
 
+	// sendGuaranteedTimeout bounds sendGuaranteed's wait — overridable per
+	// instance in tests to avoid a real multi-second sleep.
+	sendGuaranteedTimeout time.Duration
+
 	startTime time.Time
 
 	gdipToken  uintptr
@@ -256,9 +260,10 @@ func newPlatform(cfg Config) *winSplash {
 	r, g, b := parseHexRGB(cfg.AccentHex)
 	argb := uint32(0xFF000000) | uint32(r)<<16 | uint32(g)<<8 | uint32(b)
 	return &winSplash{
-		cmds:       make(chan splashCmd, 16),
-		cfg:        cfg,
-		accentARGB: argb,
+		cmds:                  make(chan splashCmd, 16),
+		cfg:                   cfg,
+		accentARGB:            argb,
+		sendGuaranteedTimeout: 2 * time.Second,
 	}
 }
 
@@ -266,13 +271,8 @@ func (s *winSplash) ShowSplash(status string) {
 	s.mu.Lock()
 	s.statusText = status
 	s.progressPct = 0
-	running := s.running
-	if !running {
-		s.running = true
-	}
-	s.mu.Unlock()
-
-	if running {
+	if s.running {
+		s.mu.Unlock()
 		// A window is already up — repurpose it for the new phase rather
 		// than spawning a second run() goroutine that would clobber the
 		// shared GDI+ state and leak the existing window. Goes through the
@@ -283,6 +283,8 @@ func (s *winSplash) ShowSplash(status string) {
 		s.sendGuaranteed(splashCmd{kind: cmdUpdate, text: status})
 		return
 	}
+	s.running = true
+	s.mu.Unlock()
 	go s.run()
 }
 
@@ -305,9 +307,11 @@ func (s *winSplash) ShowError(msg string) {
 	s.sendGuaranteed(splashCmd{kind: cmdError, text: msg})
 }
 
-// sendGuaranteedTimeout bounds sendGuaranteed's wait — overridable in tests
-// to avoid a real multi-second sleep.
-var sendGuaranteedTimeout = 2 * time.Second
+func (s *winSplash) isRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running
+}
 
 // sendGuaranteed delivers a one-shot, must-not-drop command (hide, error, or
 // a repurposed show) — unlike UpdateProgress, losing one of these leaves the
@@ -317,15 +321,12 @@ var sendGuaranteedTimeout = 2 * time.Second
 // but bounding it with a timeout means a caller can never hang forever even
 // if that invariant is ever violated by a future change.
 func (s *winSplash) sendGuaranteed(cmd splashCmd) {
-	s.mu.Lock()
-	running := s.running
-	s.mu.Unlock()
-	if !running {
+	if !s.isRunning() {
 		return
 	}
 	select {
 	case s.cmds <- cmd:
-	case <-time.After(sendGuaranteedTimeout):
+	case <-time.After(s.sendGuaranteedTimeout):
 	}
 }
 

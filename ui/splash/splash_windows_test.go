@@ -11,28 +11,11 @@ func newTestSplash() *winSplash {
 	return newPlatform(Config{AppName: "test"})
 }
 
-func withFastSendGuaranteedTimeout(t *testing.T) {
-	t.Helper()
-	orig := sendGuaranteedTimeout
-	sendGuaranteedTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { sendGuaranteedTimeout = orig })
-}
-
 func TestSendGuaranteedNoOpWhenNotRunning(t *testing.T) {
 	s := newTestSplash()
 	// running is false (zero value) — must return immediately without
 	// touching s.cmds, since nothing is consuming it.
-	done := make(chan struct{})
-	go func() {
-		s.sendGuaranteed(splashCmd{kind: cmdHide})
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("sendGuaranteed blocked despite running=false")
-	}
+	s.sendGuaranteed(splashCmd{kind: cmdHide})
 
 	select {
 	case <-s.cmds:
@@ -42,8 +25,8 @@ func TestSendGuaranteedNoOpWhenNotRunning(t *testing.T) {
 }
 
 func TestSendGuaranteedDeliversWhenConsumerIsReading(t *testing.T) {
-	withFastSendGuaranteedTimeout(t)
 	s := newTestSplash()
+	s.sendGuaranteedTimeout = 20 * time.Millisecond
 	s.mu.Lock()
 	s.running = true
 	s.mu.Unlock()
@@ -66,8 +49,8 @@ func TestSendGuaranteedDeliversWhenConsumerIsReading(t *testing.T) {
 }
 
 func TestSendGuaranteedGivesUpAfterTimeoutInsteadOfBlockingForever(t *testing.T) {
-	withFastSendGuaranteedTimeout(t)
 	s := newTestSplash()
+	s.sendGuaranteedTimeout = 20 * time.Millisecond
 	s.mu.Lock()
 	s.running = true
 	s.mu.Unlock()
@@ -88,8 +71,8 @@ func TestSendGuaranteedGivesUpAfterTimeoutInsteadOfBlockingForever(t *testing.T)
 
 	select {
 	case <-done:
-		if elapsed := time.Since(start); elapsed < sendGuaranteedTimeout {
-			t.Fatalf("returned after %v, before the %v timeout elapsed", elapsed, sendGuaranteedTimeout)
+		if elapsed := time.Since(start); elapsed < s.sendGuaranteedTimeout {
+			t.Fatalf("returned after %v, before the %v timeout elapsed", elapsed, s.sendGuaranteedTimeout)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("sendGuaranteed blocked well past its timeout — would hang forever in production")
