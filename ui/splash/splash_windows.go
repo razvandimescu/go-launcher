@@ -266,22 +266,30 @@ func (s *winSplash) ShowSplash(status string) {
 	s.mu.Lock()
 	s.statusText = status
 	s.progressPct = 0
-	if s.running {
+	running := s.running
+	if !running {
+		s.running = true
+	}
+	s.mu.Unlock()
+
+	if running {
 		// A window is already up — repurpose it for the new phase rather
 		// than spawning a second run() goroutine that would clobber the
-		// shared GDI+ state and leak the existing window.
-		hwnd := s.hwnd
-		s.mu.Unlock()
-		if hwnd != 0 {
-			pPostMessage.Call(hwnd, wmAppUpdate, 0, 0)
-		}
+		// shared GDI+ state and leak the existing window. Goes through the
+		// same guaranteed-delivery path as HideSplash/ShowError instead of
+		// posting directly to s.hwnd, so this can't race a concurrent
+		// teardown the way a direct post to a dying window handle could
+		// (the post would silently vanish, losing the new phase's text).
+		s.sendGuaranteed(splashCmd{kind: cmdUpdate, text: status})
 		return
 	}
-	s.running = true
-	s.mu.Unlock()
 	go s.run()
 }
 
+// UpdateProgress is intentionally lossy: it fires on every chunk of a
+// download (potentially thousands of times), so dropping a frame under
+// backpressure is harmless — the next one repaints correctly a moment
+// later either way.
 func (s *winSplash) UpdateProgress(percent float64, status string) {
 	select {
 	case s.cmds <- splashCmd{kind: cmdUpdate, percent: percent, text: status}:
@@ -290,16 +298,34 @@ func (s *winSplash) UpdateProgress(percent float64, status string) {
 }
 
 func (s *winSplash) HideSplash() {
-	select {
-	case s.cmds <- splashCmd{kind: cmdHide}:
-	default:
-	}
+	s.sendGuaranteed(splashCmd{kind: cmdHide})
 }
 
 func (s *winSplash) ShowError(msg string) {
+	s.sendGuaranteed(splashCmd{kind: cmdError, text: msg})
+}
+
+// sendGuaranteedTimeout bounds sendGuaranteed's wait — overridable in tests
+// to avoid a real multi-second sleep.
+var sendGuaranteedTimeout = 2 * time.Second
+
+// sendGuaranteed delivers a one-shot, must-not-drop command (hide, error, or
+// a repurposed show) — unlike UpdateProgress, losing one of these leaves the
+// splash stuck on screen (or hidden when it should reappear) with no other
+// code path to retry it. A plain blocking send would be safe as long as
+// dispatchCommands is alive and draining (true whenever running is set),
+// but bounding it with a timeout means a caller can never hang forever even
+// if that invariant is ever violated by a future change.
+func (s *winSplash) sendGuaranteed(cmd splashCmd) {
+	s.mu.Lock()
+	running := s.running
+	s.mu.Unlock()
+	if !running {
+		return
+	}
 	select {
-	case s.cmds <- splashCmd{kind: cmdError, text: msg}:
-	default:
+	case s.cmds <- cmd:
+	case <-time.After(sendGuaranteedTimeout):
 	}
 }
 
