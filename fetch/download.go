@@ -16,6 +16,7 @@ import (
 func newDefaultClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 30 * time.Second,
