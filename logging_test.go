@@ -1,6 +1,10 @@
 package launcher
 
 import (
+	"bytes"
+	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,4 +60,45 @@ func TestSetupFileLoggingAppendsToSmallFile(t *testing.T) {
 func TestSetupFileLoggingEmptyPathIsNoop(t *testing.T) {
 	// Empty path must not panic and must return a usable closer.
 	setupFileLogging("")()
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("the handle is invalid")
+}
+
+// A failing writer wrapped in bestEffortWriter must not abort io.MultiWriter,
+// even when it sits first in the chain — the windowsgui-stderr failure mode
+// that left launcher.log empty on GUI-subsystem builds.
+func TestBestEffortWriterDoesNotAbortMultiWriter(t *testing.T) {
+	var buf bytes.Buffer
+	w := io.MultiWriter(bestEffortWriter{failingWriter{}}, &buf)
+
+	n, err := w.Write([]byte("hello"))
+	if err != nil {
+		t.Fatalf("MultiWriter aborted on wrapped failing writer: %v", err)
+	}
+	if n != 5 || buf.String() != "hello" {
+		t.Fatalf("downstream writer got %q (n=%d), want %q", buf.String(), n, "hello")
+	}
+}
+
+func TestSetupFileLoggingTeesToFile(t *testing.T) {
+	prev := slog.Default()
+	defer slog.SetDefault(prev)
+
+	path := filepath.Join(t.TempDir(), "launcher.log")
+	closeLog := setupFileLogging(path)
+	defer closeLog()
+
+	slog.Info("marker line for test")
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "marker line for test") {
+		t.Errorf("log file does not contain the logged line, got %q", got)
+	}
 }
