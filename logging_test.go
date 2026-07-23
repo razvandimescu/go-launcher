@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,4 +58,62 @@ func TestSetupFileLoggingAppendsToSmallFile(t *testing.T) {
 func TestSetupFileLoggingEmptyPathIsNoop(t *testing.T) {
 	// Empty path must not panic and must return a usable closer.
 	setupFileLogging("")()
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("the handle is invalid")
+}
+
+// The wrapper reports success even when the inner writer fails, so it can
+// never abort an io.MultiWriter chain.
+func TestBestEffortWriterReportsSuccessDespiteInnerFailure(t *testing.T) {
+	n, err := bestEffortWriter{failingWriter{}}.Write([]byte("hello"))
+	if n != 5 || err != nil {
+		t.Fatalf("Write = (%d, %v), want (5, nil)", n, err)
+	}
+}
+
+func TestSetupFileLoggingTeesToFile(t *testing.T) {
+	prev := slog.Default()
+
+	path := filepath.Join(t.TempDir(), "launcher.log")
+	closeLog := setupFileLogging(path)
+	slog.Info("marker line for test")
+	closeLog()
+
+	if slog.Default() != prev {
+		t.Error("closer did not restore the previous default logger")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "marker line for test") {
+		t.Errorf("log file does not contain the logged line, got %q", got)
+	}
+}
+
+// Pins the wiring inside setupFileLogging: with the stderr slot dead (the
+// windowsgui failure mode), log lines must still reach the file. Fails if
+// the stderr writer is ever left unwrapped again.
+func TestSetupFileLoggingSurvivesDeadStderr(t *testing.T) {
+	prevStderr := logStderr
+	logStderr = failingWriter{}
+	defer func() { logStderr = prevStderr }()
+
+	path := filepath.Join(t.TempDir(), "launcher.log")
+	closeLog := setupFileLogging(path)
+	defer closeLog()
+
+	slog.Info("written despite dead stderr")
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "written despite dead stderr") {
+		t.Errorf("dead stderr blocked the file write, log file got %q", got)
+	}
 }
