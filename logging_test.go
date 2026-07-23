@@ -77,19 +77,43 @@ func TestBestEffortWriterReportsSuccessDespiteInnerFailure(t *testing.T) {
 
 func TestSetupFileLoggingTeesToFile(t *testing.T) {
 	prev := slog.Default()
-	defer slog.SetDefault(prev)
 
 	path := filepath.Join(t.TempDir(), "launcher.log")
 	closeLog := setupFileLogging(path)
-	defer closeLog()
-
 	slog.Info("marker line for test")
+	closeLog()
 
+	if slog.Default() != prev {
+		t.Error("closer did not restore the previous default logger")
+	}
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(got), "marker line for test") {
 		t.Errorf("log file does not contain the logged line, got %q", got)
+	}
+}
+
+// Pins the wiring inside setupFileLogging: with the stderr slot dead (the
+// windowsgui failure mode), log lines must still reach the file. Fails if
+// the stderr writer is ever left unwrapped again.
+func TestSetupFileLoggingSurvivesDeadStderr(t *testing.T) {
+	prevStderr := logStderr
+	logStderr = failingWriter{}
+	defer func() { logStderr = prevStderr }()
+
+	path := filepath.Join(t.TempDir(), "launcher.log")
+	closeLog := setupFileLogging(path)
+	defer closeLog()
+
+	slog.Info("written despite dead stderr")
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "written despite dead stderr") {
+		t.Errorf("dead stderr blocked the file write, log file got %q", got)
 	}
 }
