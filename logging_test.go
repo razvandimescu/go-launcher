@@ -1,9 +1,7 @@
 package launcher
 
 import (
-	"bytes"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -68,19 +66,12 @@ func (failingWriter) Write([]byte) (int, error) {
 	return 0, errors.New("the handle is invalid")
 }
 
-// A failing writer wrapped in bestEffortWriter must not abort io.MultiWriter,
-// even when it sits first in the chain — the windowsgui-stderr failure mode
-// that left launcher.log empty on GUI-subsystem builds.
-func TestBestEffortWriterDoesNotAbortMultiWriter(t *testing.T) {
-	var buf bytes.Buffer
-	w := io.MultiWriter(bestEffortWriter{failingWriter{}}, &buf)
-
-	n, err := w.Write([]byte("hello"))
-	if err != nil {
-		t.Fatalf("MultiWriter aborted on wrapped failing writer: %v", err)
-	}
-	if n != 5 || buf.String() != "hello" {
-		t.Fatalf("downstream writer got %q (n=%d), want %q", buf.String(), n, "hello")
+// The wrapper reports success even when the inner writer fails, so it can
+// never abort an io.MultiWriter chain.
+func TestBestEffortWriterReportsSuccessDespiteInnerFailure(t *testing.T) {
+	n, err := bestEffortWriter{failingWriter{}}.Write([]byte("hello"))
+	if n != 5 || err != nil {
+		t.Fatalf("Write = (%d, %v), want (5, nil)", n, err)
 	}
 }
 
