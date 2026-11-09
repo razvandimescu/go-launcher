@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -916,6 +917,30 @@ func TestAfterLockAcquiredHookFires(t *testing.T) {
 	}
 	if !hookCalled {
 		t.Error("AfterLockAcquired hook did not fire")
+	}
+}
+
+func TestLauncherReadyReportsVersion(t *testing.T) {
+	cfg, dataDir := setupTestLauncher(t)
+	cfg.Version = "1.2.3"
+
+	t.Setenv("CHILD_HEARTBEAT", "1")
+	t.Setenv("CHILD_SHUTDOWN", "1")
+	t.Setenv("CHILD_EXIT_CODE", "0")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if code := New(cfg).Run(ctx); code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dataDir, launcherReadyFile))
+	if err != nil {
+		t.Fatalf("launcher_ready not written: %v", err)
+	}
+	var ready launcherReady
+	if err := json.Unmarshal(data, &ready); err != nil || ready.Version != "1.2.3" {
+		t.Errorf("expected version 1.2.3, got %q (err %v)", data, err)
 	}
 }
 

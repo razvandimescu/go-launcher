@@ -34,6 +34,10 @@ type Config struct {
 	// deterministic install location.
 	LauncherBinaryName string
 
+	// Version is the launcher's own version. It is logged at startup and
+	// written to launcher_ready once the launcher holds the lock.
+	Version string
+
 	// Optional with sensible defaults.
 	ChildArgs         []string        // args forwarded to child (default: none)
 	Backoff           []time.Duration // restart delays (default: [2s, 5s, 15s])
@@ -164,6 +168,8 @@ func (l *Launcher) Run(ctx context.Context) int {
 		return 1
 	}
 
+	l.announceReady()
+
 	// Startup recovery
 	deleteStateTmpFiles(l.cfg.DataDir)
 	cleanStagingDir(l.cfg.DataDir)
@@ -201,6 +207,14 @@ func (l *Launcher) Run(ctx context.Context) int {
 	}
 
 	return l.supervisorLoop(ctx)
+}
+
+// announceReady logs the launcher's version and writes launcher_ready.
+func (l *Launcher) announceReady() {
+	slog.Info("launcher started", "version", l.cfg.Version)
+	if err := writeLauncherReady(l.cfg.DataDir, l.cfg.Version); err != nil {
+		slog.Warn("failed to write launcher_ready", "error", err)
+	}
 }
 
 func (l *Launcher) supervisorLoop(ctx context.Context) int {

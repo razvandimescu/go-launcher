@@ -10,7 +10,14 @@ const (
 	heartbeatFile     = "heartbeat"
 	shutdownFile      = "shutdown_requested"
 	pendingUpdateFile = "pending_update.json"
+	launcherReadyFile = "launcher_ready"
 )
+
+// launcherReady is written by a launcher that holds the lock and has loaded
+// its state, so a process waiting for it knows which version took over.
+type launcherReady struct {
+	Version string `json:"version"`
+}
 
 // heartbeatExists returns true if the heartbeat file is present. The launcher
 // deletes the heartbeat before every spawn, so existence proves the current
@@ -72,4 +79,9 @@ func writePendingUpdate(dataDir string, r *Release) error {
 func writeShutdownRequested(dataDir string) error {
 	path := filepath.Join(dataDir, shutdownFile)
 	return os.WriteFile(path, []byte(""), 0600)
+}
+
+// writeLauncherReady atomically writes launcher_ready with the given version.
+func writeLauncherReady(dataDir, version string) error {
+	return atomicWriteJSON(filepath.Join(dataDir, launcherReadyFile), launcherReady{Version: version})
 }

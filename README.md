@@ -141,6 +141,7 @@ $DATA_DIR/
   heartbeat                           # touched by child after healthy init
   pending_update.json                 # written by child when update is available
   shutdown_requested                  # flag file for clean exit
+  launcher_ready                      # version of the launcher holding the lock
   versions/
     current/                          # active version (opaque directory)
     previous/                         # rollback target
@@ -228,6 +229,10 @@ launcher.Config{
     // basename of the binary that was actually launched (which may be
     // version-tagged by an installer, e.g. MyApp-1.0-installer.exe).
     LauncherBinaryName string
+
+    // The launcher's own version. Logged at startup and written to
+    // launcher_ready once the launcher holds the lock.
+    Version string
 
     // Optional (sensible defaults)
     ChildArgs         []string        // args forwarded to child (default: none)
