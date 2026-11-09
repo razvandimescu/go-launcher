@@ -22,6 +22,12 @@ type Fetcher interface {
 	Download(ctx context.Context, release *Release, dst io.Writer, progress func(float64)) error
 }
 
+// LauncherFetcher is an optional Fetcher extension that enables launcher
+// self-update. The launcher release is downloaded with Fetcher.Download.
+type LauncherFetcher interface {
+	LatestLauncher(ctx context.Context) (*Release, error)
+}
+
 // Registrar handles OS-level registration (login items, system services).
 // Pass nil to skip registration.
 type Registrar interface {

@@ -76,10 +76,19 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 		return fmt.Errorf("create staging dir: %w", err)
 	}
 
-	destPath := filepath.Join(stgDir, cfg.ChildBinaryName)
+	if err := downloadVerified(ctx, cfg, release, filepath.Join(stgDir, cfg.ChildBinaryName)); err != nil {
+		os.RemoveAll(stgDir)
+		return err
+	}
+	return nil
+}
+
+// downloadVerified downloads a release to destPath, verifies its sha256 when
+// one is given, and makes it executable. On error, destPath is removed.
+func downloadVerified(ctx context.Context, cfg *Config, release *Release, destPath string) error {
 	f, err := os.Create(destPath)
 	if err != nil {
-		return fmt.Errorf("create staging file: %w", err)
+		return fmt.Errorf("create %s: %w", filepath.Base(destPath), err)
 	}
 
 	var w io.Writer = f
@@ -104,20 +113,20 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 
 	if err := cfg.Fetcher.Download(ctx, release, w, progress); err != nil {
 		f.Close()
-		os.RemoveAll(stgDir)
+		os.Remove(destPath)
 		return fmt.Errorf("download: %w", err)
 	}
 
 	if err := f.Close(); err != nil {
-		os.RemoveAll(stgDir)
-		return fmt.Errorf("close staging file: %w", err)
+		os.Remove(destPath)
+		return fmt.Errorf("close %s: %w", filepath.Base(destPath), err)
 	}
 
 	// Verify checksum
 	if hasher != nil {
 		actual := hex.EncodeToString(hasher.hasher.Sum(nil))
 		if actual != hasher.expected {
-			os.RemoveAll(stgDir)
+			os.Remove(destPath)
 			return fmt.Errorf("checksum mismatch: expected %s, got %s", hasher.expected, actual)
 		}
 		slog.Info("checksum verified", "algo", "sha256")
@@ -125,8 +134,8 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 
 	// Make binary executable
 	if err := os.Chmod(destPath, 0755); err != nil {
-		os.RemoveAll(stgDir)
-		return fmt.Errorf("chmod staging binary: %w", err)
+		os.Remove(destPath)
+		return fmt.Errorf("chmod %s: %w", filepath.Base(destPath), err)
 	}
 
 	return nil

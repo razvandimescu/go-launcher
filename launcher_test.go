@@ -2,6 +2,8 @@ package launcher
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -460,6 +462,16 @@ func (f *fakeFetcher) Download(_ context.Context, _ *Release, dst io.Writer, pro
 		progress(1.0)
 	}
 	return err
+}
+
+// fakeLauncherFetcher adds LatestLauncher to fakeFetcher for self-update tests.
+type fakeLauncherFetcher struct {
+	fakeFetcher
+	launcher Release
+}
+
+func (f *fakeLauncherFetcher) LatestLauncher(_ context.Context) (*Release, error) {
+	return &f.launcher, nil
 }
 
 // fakeUI records all UI method calls for assertion.
@@ -991,6 +1003,44 @@ func TestRelocateDestName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := relocateDestName(tc.binaryName, tc.execPath); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStageLauncherUpdate(t *testing.T) {
+	payload := []byte("launcher v2")
+	src := filepath.Join(t.TempDir(), "launcher-v2")
+	if err := os.WriteFile(src, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(payload)
+	goodChecksum := "sha256:" + hex.EncodeToString(sum[:])
+
+	for _, tc := range []struct {
+		name       string
+		latest     Release
+		wantStaged bool
+	}{
+		{"different version is staged", Release{Version: "2.0.0", Checksum: goodChecksum}, true},
+		{"same version ignoring v prefix is skipped", Release{Version: "v1.0.0", Checksum: goodChecksum}, false},
+		{"checksum mismatch leaves nothing", Release{Version: "2.0.0", Checksum: "sha256:00"}, false},
+		{"release without checksum is skipped", Release{Version: "2.0.0"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lf := &fakeLauncherFetcher{fakeFetcher: fakeFetcher{binaryPath: src}, launcher: tc.latest}
+			cfg := Config{Version: "1.0.0", Fetcher: lf}
+			dest := filepath.Join(t.TempDir(), "launcher.new")
+
+			if staged := stageLauncherUpdate(context.Background(), &cfg, lf, dest); staged != tc.wantStaged {
+				t.Fatalf("staged = %v, want %v", staged, tc.wantStaged)
+			}
+			got, err := os.ReadFile(dest)
+			if tc.wantStaged && string(got) != string(payload) {
+				t.Errorf("staged file = %q (err %v), want %q", got, err, payload)
+			}
+			if !tc.wantStaged && !os.IsNotExist(err) {
+				t.Errorf("expected no staged file, got err %v", err)
 			}
 		})
 	}

@@ -169,6 +169,7 @@ func (l *Launcher) Run(ctx context.Context) int {
 	}
 
 	l.announceReady()
+	l.checkLauncherUpdate(ctx)
 
 	// Startup recovery
 	deleteStateTmpFiles(l.cfg.DataDir)
