@@ -141,7 +141,7 @@ $DATA_DIR/
   heartbeat                           # touched by child after healthy init
   pending_update.json                 # written by child when update is available
   shutdown_requested                  # flag file for clean exit
-  launcher_ready                      # version of the launcher holding the lock
+  launcher_ready                      # version and PID of the launcher holding the lock
   versions/
     current/                          # active version (opaque directory)
     previous/                         # rollback target

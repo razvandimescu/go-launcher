@@ -35,7 +35,7 @@ type Config struct {
 	LauncherBinaryName string
 
 	// Version is the launcher's own version. It is logged at startup and
-	// written to launcher_ready once the launcher holds the lock.
+	// written to launcher_ready, with the PID, once the launcher holds the lock.
 	Version string
 
 	// Optional with sensible defaults.

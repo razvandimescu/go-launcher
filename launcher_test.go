@@ -939,8 +939,8 @@ func TestLauncherReadyReportsVersion(t *testing.T) {
 		t.Fatalf("launcher_ready not written: %v", err)
 	}
 	var ready launcherReady
-	if err := json.Unmarshal(data, &ready); err != nil || ready.Version != "1.2.3" {
-		t.Errorf("expected version 1.2.3, got %q (err %v)", data, err)
+	if err := json.Unmarshal(data, &ready); err != nil || ready.Version != "1.2.3" || ready.PID != os.Getpid() {
+		t.Errorf("expected version 1.2.3 and pid %d, got %q (err %v)", os.Getpid(), data, err)
 	}
 }
 

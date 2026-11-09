@@ -14,9 +14,12 @@ const (
 )
 
 // launcherReady is written by a launcher that holds the lock and has loaded
-// its state, so a process waiting for it knows which version took over.
+// its state, so a process waiting for it knows which version took over. The
+// PID ties the file to one process: a file left by an earlier launcher never
+// matches the process the waiter started.
 type launcherReady struct {
 	Version string `json:"version"`
+	PID     int    `json:"pid"`
 }
 
 // heartbeatExists returns true if the heartbeat file is present. The launcher
@@ -81,7 +84,9 @@ func writeShutdownRequested(dataDir string) error {
 	return os.WriteFile(path, []byte(""), 0600)
 }
 
-// writeLauncherReady atomically writes launcher_ready with the given version.
+// writeLauncherReady atomically writes launcher_ready with the given version
+// and the current PID.
 func writeLauncherReady(dataDir, version string) error {
-	return atomicWriteJSON(filepath.Join(dataDir, launcherReadyFile), launcherReady{Version: version})
+	return atomicWriteJSON(filepath.Join(dataDir, launcherReadyFile),
+		launcherReady{Version: version, PID: os.Getpid()})
 }
