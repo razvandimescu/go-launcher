@@ -223,8 +223,11 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 			return code
 		}
 
-		// Delete old heartbeat before spawning
+		// Signals found before the spawn are stale: an earlier child left them
+		// and no launcher saw its exit.
 		deleteHeartbeat(l.cfg.DataDir)
+		deleteShutdownFile(l.cfg.DataDir)
+		deletePendingUpdate(l.cfg.DataDir)
 
 		if l.cfg.UI != nil {
 			msg := "Starting " + l.cfg.AppName
