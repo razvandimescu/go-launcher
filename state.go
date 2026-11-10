@@ -74,9 +74,3 @@ func atomicWriteJSON(path string, v any) error {
 	}
 	return nil
 }
-
-// deleteStateTmpFiles removes stale .tmp files left by interrupted writes.
-func deleteStateTmpFiles(dataDir string) {
-	os.Remove(stateFilePath(dataDir) + ".tmp")
-	os.Remove(filepath.Join(dataDir, "pending_update.json.tmp"))
-}

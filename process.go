@@ -21,9 +21,6 @@ func spawnChild(binaryPath string, args []string, envVar, dataDir string) (*chil
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), envVar+"="+dataDir)
 
-	// Capture spawnTime before Start: a fast child can create the heartbeat
-	// file before this goroutine returns from Start, which would make
-	// heartbeatTouchedAfter(spawnTime) miss the touch (strict After).
 	spawnTime := time.Now()
 	if err := cmd.Start(); err != nil {
 		return nil, err

@@ -59,7 +59,7 @@ func TestRollbackRecoversWithEmptyVersions(t *testing.T) {
 	if code := l.Run(ctx); code != 0 {
 		t.Fatalf("expected exit 0 after rollback recovery, got %d", code)
 	}
-	if !hasCurrentVersion(dataDir) {
+	if !hasEntries(currentVersionDir(dataDir)) {
 		t.Error("expected current/ to still hold a binary after recovery")
 	}
 }

@@ -39,22 +39,10 @@ func childBinaryPath(dataDir, binaryName string) string {
 	return filepath.Join(currentVersionDir(dataDir), binaryName)
 }
 
-// hasCurrentVersion returns true if versions/current/ exists and is non-empty.
-func hasCurrentVersion(dataDir string) bool {
-	entries, err := os.ReadDir(currentVersionDir(dataDir))
-	if err != nil {
-		return false
-	}
-	return len(entries) > 0
-}
-
-// hasPreviousVersion returns true if versions/previous/ exists and is non-empty.
-func hasPreviousVersion(dataDir string) bool {
-	entries, err := os.ReadDir(previousVersionDir(dataDir))
-	if err != nil {
-		return false
-	}
-	return len(entries) > 0
+// hasEntries reports whether dir exists and is non-empty.
+func hasEntries(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	return err == nil && len(entries) > 0
 }
 
 // rotateVersion moves staging/ → current/ (with current/ → previous/).

@@ -25,7 +25,6 @@ func newDefaultClient() *http.Client {
 }
 
 // downloadHTTP downloads from url into dst, reporting progress via the callback.
-// contentLength is used for progress calculation; pass -1 if unknown.
 func downloadHTTP(ctx context.Context, url string, dst io.Writer, client *http.Client, progress func(float64)) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -74,8 +73,6 @@ type progressReader struct {
 func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.reader.Read(p)
 	pr.read += int64(n)
-	if pr.total > 0 {
-		pr.progress(float64(pr.read) / float64(pr.total))
-	}
+	pr.progress(float64(pr.read) / float64(pr.total))
 	return n, err
 }

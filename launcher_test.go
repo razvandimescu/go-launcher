@@ -692,10 +692,10 @@ func main() {
 	}
 
 	// Verify version directories were rotated
-	if !hasCurrentVersion(dataDir) {
+	if !hasEntries(currentVersionDir(dataDir)) {
 		t.Error("expected current/ to exist after update")
 	}
-	if !hasPreviousVersion(dataDir) {
+	if !hasEntries(previousVersionDir(dataDir)) {
 		t.Error("expected previous/ to exist after update")
 	}
 }
@@ -814,7 +814,7 @@ func main() {
 				t.Fatalf("expected exit 0 after bootstrap, got %d", code)
 			}
 
-			if !hasCurrentVersion(dataDir) {
+			if !hasEntries(currentVersionDir(dataDir)) {
 				t.Error("expected current/ to have child after bootstrap")
 			}
 		})
