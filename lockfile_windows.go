@@ -3,21 +3,19 @@
 package launcher
 
 import (
+	"errors"
+	"os"
+
 	"golang.org/x/sys/windows"
 )
 
-const _STILL_ACTIVE = 259
-
-func processAlive(pid int) bool {
-	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-	if err != nil {
-		return false
+func lockFile(f *os.File) error {
+	// One byte far past the PID text, so the PID stays readable while held.
+	ol := windows.Overlapped{Offset: 0xFFFFFFFE, OffsetHigh: 0x7FFFFFFF}
+	err := windows.LockFileEx(windows.Handle(f.Fd()),
+		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ol)
+	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+		return errLocked
 	}
-	defer windows.CloseHandle(h)
-
-	var exitCode uint32
-	if err := windows.GetExitCodeProcess(h, &exitCode); err != nil {
-		return false
-	}
-	return exitCode == _STILL_ACTIVE
+	return err
 }

@@ -42,7 +42,7 @@ The launcher handles:
 - **Anti-oscillation** -- prevents infinite swapping between two broken versions
 - **Bootstrap download** -- if no child binary exists, download the latest version on first launch
 - **Self-relocation** -- launcher copies itself from Downloads to a permanent install location on first run
-- **Singleton enforcement** -- PID lockfile prevents duplicate instances
+- **Singleton enforcement** -- OS file lock prevents duplicate instances and is released when the launcher dies
 
 Single dependency (`golang.org/x/sys`). The `child` package imported by your application has **zero transitive dependencies** -- standard library only.
 
@@ -137,7 +137,7 @@ func main() {
 ```
 $DATA_DIR/
   launcher.json                       # persistent state (7 flat JSON fields)
-  launcher.lock                       # PID lockfile
+  launcher.lock                       # OS file lock (holds the PID)
   heartbeat                           # touched by child after healthy init
   pending_update.json                 # written by child when update is available
   shutdown_requested                  # flag file for clean exit
