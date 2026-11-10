@@ -236,6 +236,7 @@ launcher.Config{
     CrashWindow       time.Duration   // crash count resets after this (default: 5min)
     ProbationDuration time.Duration   // new version probation (default: 10min)
     KillTimeout       time.Duration   // SIGTERM -> SIGKILL escalation (default: 30s)
+    HeartbeatTimeout  time.Duration   // kill a child with no heartbeat this long after spawn, counted as a crash (default: 0 = wait forever)
 
     // Pluggable (all optional except Fetcher if you want updates)
     UI        UI          // nil = headless

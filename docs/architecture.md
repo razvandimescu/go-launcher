@@ -19,6 +19,7 @@ loop:
   spawn child
   wait for exit:
     heartbeat touched     -> mark healthy, hide splash
+    no heartbeat by HeartbeatTimeout (if set) -> kill, handled as a crash
     shutdown_requested    -> if update pending: download, rotate, continue
                             else: exit 0
     no shutdown_requested -> record crash, backoff, continue

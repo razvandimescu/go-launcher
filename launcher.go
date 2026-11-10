@@ -43,6 +43,13 @@ type Config struct {
 	KillTimeout       time.Duration   // SIGTERM → SIGKILL escalation (default: 30s)
 	HeartbeatPoll     time.Duration   // heartbeat check interval (default: 500ms)
 
+	// HeartbeatTimeout kills a child that has not touched the heartbeat this
+	// long after spawn and counts it as a crash. Zero (the default) waits
+	// forever, which suits children that never touch it. Hung starts are
+	// HeartbeatTimeout apart, so they only lead to a rollback when
+	// CrashWindow > (CrashThreshold-1) * HeartbeatTimeout.
+	HeartbeatTimeout time.Duration
+
 	// Pluggable components.
 	UI        UI        // nil = headless
 	Fetcher   Fetcher   // nil = no bootstrap/updates
@@ -393,16 +400,31 @@ func (l *Launcher) handleUpdate(ctx context.Context) updateAction {
 }
 
 // waitForChild waits for the child to exit, monitoring the heartbeat file
-// to dismiss the splash screen.
+// to dismiss the splash screen and to enforce HeartbeatTimeout.
 func (l *Launcher) waitForChild(ctx context.Context, cp *childProcess) int {
 	heartbeatChecked := false
 	ticker := time.NewTicker(l.cfg.HeartbeatPoll)
 	defer ticker.Stop()
 
+	var deadline <-chan time.Time // nil never fires
+	if l.cfg.HeartbeatTimeout > 0 {
+		timer := time.NewTimer(l.cfg.HeartbeatTimeout)
+		defer timer.Stop()
+		deadline = timer.C
+	}
+
 	for {
 		select {
 		case <-cp.Done():
 			return cp.ExitCode()
+		case <-deadline:
+			if !heartbeatExists(l.cfg.DataDir) {
+				slog.Warn("child did not touch the heartbeat in time, killing it",
+					"timeout", l.cfg.HeartbeatTimeout)
+				if err := cp.Kill(); err != nil {
+					slog.Error("failed to kill child", "error", err)
+				}
+			}
 		case <-ticker.C:
 			if !heartbeatChecked && heartbeatExists(l.cfg.DataDir) {
 				heartbeatChecked = true
