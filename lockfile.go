@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,8 +11,15 @@ import (
 
 const lockFileName = "launcher.lock"
 
+var errLocked = errors.New("lock held by another process")
+
+// lockfile is an OS file lock, which the kernel drops when its holder exits,
+// however it exits. The PID written inside is for diagnostics only: checking
+// it for liveness mistakes a reused PID, common after a reboot, for a running
+// launcher.
 type lockfile struct {
 	path string
+	f    *os.File
 }
 
 func newLockfile(dataDir string) *lockfile {
@@ -21,25 +29,38 @@ func newLockfile(dataDir string) *lockfile {
 // Acquire attempts to take the lockfile. Returns an error if another
 // launcher instance is already running.
 func (l *lockfile) Acquire() error {
-	// Check for existing lock
-	if data, err := os.ReadFile(l.path); err == nil {
-		pidStr := strings.TrimSpace(string(data))
-		if pid, err := strconv.Atoi(pidStr); err == nil {
-			if processAlive(pid) {
-				return fmt.Errorf("already running (pid %d)", pid)
-			}
+	f, err := os.OpenFile(l.path, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return fmt.Errorf("open lockfile: %w", err)
+	}
+	if err := lockFile(f); err != nil {
+		f.Close()
+		if errors.Is(err, errLocked) {
+			return fmt.Errorf("already running (pid %s)", lockHolder(l.path))
 		}
-		// Stale lockfile — previous launcher crashed
+		return fmt.Errorf("lock lockfile: %w", err)
 	}
-
-	pid := os.Getpid()
-	if err := os.WriteFile(l.path, []byte(strconv.Itoa(pid)), 0600); err != nil {
-		return fmt.Errorf("write lockfile: %w", err)
+	if err := f.Truncate(0); err == nil {
+		f.WriteAt([]byte(strconv.Itoa(os.Getpid())), 0)
 	}
+	l.f = f
 	return nil
 }
 
-// Release removes the lockfile.
+// Release unlocks without deleting: a launcher waiting on the old file would
+// lock an unlinked inode while a third one created and locked a new file.
 func (l *lockfile) Release() {
-	os.Remove(l.path)
+	if l.f == nil {
+		return
+	}
+	l.f.Close()
+	l.f = nil
+}
+
+func lockHolder(path string) string {
+	data, _ := os.ReadFile(path)
+	if pid := strings.TrimSpace(string(data)); pid != "" {
+		return pid
+	}
+	return "unknown"
 }

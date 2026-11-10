@@ -2,9 +2,16 @@
 
 package launcher
 
-import "syscall"
+import (
+	"errors"
+	"os"
+	"syscall"
+)
 
-func processAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
+func lockFile(f *os.File) error {
+	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return errLocked
+	}
+	return err
 }

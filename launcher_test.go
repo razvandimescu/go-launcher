@@ -1,14 +1,18 @@
 package launcher
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -193,6 +197,69 @@ func TestStaleLockfileRecovery(t *testing.T) {
 	lf := newLockfile(dataDir)
 	if err := lf.Acquire(); err != nil {
 		t.Fatalf("should acquire stale lockfile, got: %v", err)
+	}
+	lf.Release()
+}
+
+// After a reboot the PID left in the file can belong to any process,
+// including the new launcher itself.
+func TestLockfileIgnoresReusedPID(t *testing.T) {
+	for name, pid := range map[string]int{"other process": os.Getppid(), "own process": os.Getpid()} {
+		t.Run(name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			os.WriteFile(filepath.Join(dataDir, lockFileName), []byte(strconv.Itoa(pid)), 0600)
+
+			lf := newLockfile(dataDir)
+			if err := lf.Acquire(); err != nil {
+				t.Fatalf("lockfile with a reused PID blocked the launcher: %v", err)
+			}
+			lf.Release()
+		})
+	}
+}
+
+const lockHolderEnv = "GO_LAUNCHER_TEST_LOCK_HOLDER"
+
+func TestLockfileReleasedWhenHolderDies(t *testing.T) {
+	if dataDir := os.Getenv(lockHolderEnv); dataDir != "" {
+		lf := newLockfile(dataDir)
+		if err := lf.Acquire(); err != nil {
+			fmt.Println(err)
+			os.Exit(2)
+		}
+		fmt.Println("locked")
+		time.Sleep(time.Hour)
+		runtime.KeepAlive(lf)
+	}
+
+	dataDir := t.TempDir()
+	holder := exec.Command(os.Args[0], "-test.run=^TestLockfileReleasedWhenHolderDies$")
+	holder.Env = append(os.Environ(), lockHolderEnv+"="+dataDir)
+	stdout, _ := holder.StdoutPipe()
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if line, _ := bufio.NewReader(stdout).ReadString('\n'); line != "locked\n" {
+		holder.Process.Kill()
+		t.Fatalf("holder did not take the lock: %q", line)
+	}
+
+	err := newLockfile(dataDir).Acquire()
+	if err == nil || !strings.Contains(err.Error(), strconv.Itoa(holder.Process.Pid)) {
+		t.Errorf("want an error naming holder pid %d, got %v", holder.Process.Pid, err)
+	}
+
+	holder.Process.Kill()
+	holder.Wait()
+
+	// Windows unlocks a dead process's files asynchronously.
+	lf := newLockfile(dataDir)
+	deadline := time.Now().Add(5 * time.Second)
+	for err = lf.Acquire(); err != nil && time.Now().Before(deadline); err = lf.Acquire() {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("lock outlived its holder: %v", err)
 	}
 	lf.Release()
 }
