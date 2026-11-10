@@ -59,6 +59,11 @@ func performUpdate(ctx context.Context, cfg *Config, release *Release) error {
 // downloadToStaging downloads a release to the staging directory with checksum
 // verification and progress reporting.
 func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error {
+	want, ok := strings.CutPrefix(release.Checksum, "sha256:")
+	if release.Checksum != "" && (!ok || want == "") {
+		return fmt.Errorf("unsupported checksum %q, want sha256:<hex>", release.Checksum)
+	}
+
 	stgDir := stagingVersionDir(cfg.DataDir)
 
 	// Clean any previous staging
@@ -73,10 +78,6 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 		return fmt.Errorf("create staging file: %w", err)
 	}
 
-	want := ""
-	if algo, sum, ok := parseChecksum(release.Checksum); ok && algo == "sha256" {
-		want = sum
-	}
 	hasher := sha256.New()
 
 	progress := func(pct float64) {
@@ -99,7 +100,7 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 
 	if want != "" {
 		actual := hex.EncodeToString(hasher.Sum(nil))
-		if actual != want {
+		if !strings.EqualFold(actual, want) {
 			os.RemoveAll(stgDir)
 			return fmt.Errorf("checksum mismatch: expected %s, got %s", want, actual)
 		}
@@ -113,16 +114,4 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 	}
 
 	return nil
-}
-
-// parseChecksum splits "sha256:abc123" into ("sha256", "abc123", true).
-func parseChecksum(s string) (algo, hash string, ok bool) {
-	if s == "" {
-		return "", "", false
-	}
-	parts := strings.SplitN(s, ":", 2)
-	if len(parts) != 2 || parts[1] == "" {
-		return "", "", false
-	}
-	return parts[0], parts[1], true
 }
