@@ -71,7 +71,8 @@ func atomicWriteJSON(path string, v any) error {
 		return fmt.Errorf("write %s: %w", filepath.Base(tmpPath), err)
 	}
 
-	if err := os.Rename(tmpPath, path); err != nil {
+	// On Windows a reader that has the file open blocks the replace for a moment.
+	if err := renameWithRetry(tmpPath, path, time.Second); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("rename %s: %w", filepath.Base(path), err)
 	}
