@@ -117,6 +117,13 @@ func downloadVerified(ctx context.Context, cfg *Config, release *Release, destPa
 		return fmt.Errorf("download: %w", err)
 	}
 
+	// A file that is only in memory can be incomplete after a power failure.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(destPath)
+		return fmt.Errorf("sync %s: %w", filepath.Base(destPath), err)
+	}
+
 	if err := f.Close(); err != nil {
 		os.Remove(destPath)
 		return fmt.Errorf("close %s: %w", filepath.Base(destPath), err)
