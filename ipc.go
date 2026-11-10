@@ -62,14 +62,3 @@ func deletePendingUpdate(dataDir string) {
 func deleteHeartbeat(dataDir string) {
 	os.Remove(filepath.Join(dataDir, heartbeatFile))
 }
-
-// writePendingUpdate atomically writes pending_update.json.
-func writePendingUpdate(dataDir string, r *Release) error {
-	return atomicWriteJSON(filepath.Join(dataDir, pendingUpdateFile), r)
-}
-
-// writeShutdownRequested creates the shutdown_requested flag file.
-func writeShutdownRequested(dataDir string) error {
-	path := filepath.Join(dataDir, shutdownFile)
-	return os.WriteFile(path, []byte(""), 0600)
-}

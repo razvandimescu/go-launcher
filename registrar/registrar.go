@@ -1,5 +1,5 @@
-// Package registrar provides platform-native OS registration for go-launcher,
-// including login items (start at user login) and system services.
+// Package registrar provides platform-native login items (start at user login)
+// for go-launcher.
 package registrar
 
 import launcher "github.com/razvandimescu/go-launcher"

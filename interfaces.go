@@ -22,13 +22,11 @@ type Fetcher interface {
 	Download(ctx context.Context, release *Release, dst io.Writer, progress func(float64)) error
 }
 
-// Registrar handles OS-level registration (login items, system services).
-// Pass nil to skip registration.
+// Registrar registers the launcher to start at user login. Pass nil to skip
+// registration.
 type Registrar interface {
 	RegisterLoginItem(binaryPath string) error
 	UnregisterLoginItem() error
-	RegisterService(binaryPath string, args []string) error
-	UnregisterService() error
 }
 
 // Release describes a downloadable version of the child binary.

@@ -39,11 +39,3 @@ func (r *windowsRegistrar) UnregisterLoginItem() error {
 	}
 	return err
 }
-
-func (r *windowsRegistrar) RegisterService(binaryPath string, args []string) error {
-	return fmt.Errorf("registrar: Windows service registration not yet implemented")
-}
-
-func (r *windowsRegistrar) UnregisterService() error {
-	return fmt.Errorf("registrar: Windows service unregistration not yet implemented")
-}

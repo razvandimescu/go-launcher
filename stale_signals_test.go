@@ -2,6 +2,8 @@ package launcher
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -42,4 +44,15 @@ func TestStalePendingUpdateIsNotInstalled(t *testing.T) {
 	if n := fetcher.downloads.Load(); n != 0 {
 		t.Errorf("a clean shutdown installed a stale pending update (%d downloads)", n)
 	}
+}
+
+// writePendingUpdate atomically writes pending_update.json.
+func writePendingUpdate(dataDir string, r *Release) error {
+	return atomicWriteJSON(filepath.Join(dataDir, pendingUpdateFile), r)
+}
+
+// writeShutdownRequested creates the shutdown_requested flag file.
+func writeShutdownRequested(dataDir string) error {
+	path := filepath.Join(dataDir, shutdownFile)
+	return os.WriteFile(path, []byte(""), 0600)
 }

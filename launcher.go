@@ -111,18 +111,6 @@ func (l *Launcher) runAfterLockHook(ctx context.Context) error {
 	return nil
 }
 
-// Status returns the current launcher state (for --status flag).
-func (l *Launcher) Status() *State {
-	if l.state == nil {
-		s, err := loadState(l.cfg.DataDir)
-		if err != nil {
-			return &State{}
-		}
-		return s
-	}
-	return l.state
-}
-
 // Run executes the main supervisor loop. Returns the process exit code.
 func (l *Launcher) Run(ctx context.Context) int {
 	// Self-relocate on first run
@@ -492,16 +480,6 @@ func (l *Launcher) sleepBackoff(ctx context.Context, index int) int {
 	return index
 }
 
-// Executable returns the path to the child binary in versions/current/.
-func (l *Launcher) Executable() string {
-	return childBinaryPath(l.cfg.DataDir, l.cfg.ChildBinaryName)
-}
-
-// DataDir returns the configured data directory.
-func (l *Launcher) DataDir() string {
-	return l.cfg.DataDir
-}
-
 // registerLoginItem registers the launcher as an OS login item.
 // Idempotent and non-fatal — logs a warning on failure.
 func (l *Launcher) registerLoginItem() {
@@ -516,20 +494,4 @@ func (l *Launcher) registerLoginItem() {
 	if err := l.cfg.Registrar.RegisterLoginItem(execPath); err != nil {
 		slog.Warn("login item registration failed", "error", err)
 	}
-}
-
-// Shutdown writes shutdown_requested and can be called from the child
-// to coordinate a clean exit. This is primarily for testing; in production,
-// the child uses the child/ package.
-func Shutdown(dataDir string) error {
-	return writeShutdownRequested(dataDir)
-}
-
-// RequestUpdate writes pending_update.json and shutdown_requested.
-// This is primarily for testing; in production, the child uses the child/ package.
-func RequestUpdate(dataDir string, r *Release) error {
-	if err := writePendingUpdate(dataDir, r); err != nil {
-		return err
-	}
-	return writeShutdownRequested(dataDir)
 }
