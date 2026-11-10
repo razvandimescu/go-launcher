@@ -136,8 +136,6 @@ func (l *Launcher) Run(ctx context.Context) int {
 		}
 	}
 
-	l.registerLoginItem()
-
 	// Ensure data directory exists
 	if err := ensureDataDir(l.cfg.DataDir); err != nil {
 		slog.Error("failed to create data directory", "error", err)
@@ -157,6 +155,9 @@ func (l *Launcher) Run(ctx context.Context) int {
 		return 1
 	}
 	defer l.lock.Release()
+
+	// After the lock: a second copy that lost it would point the login item at itself.
+	l.registerLoginItem()
 
 	if err := l.runAfterLockHook(ctx); err != nil {
 		return 1
@@ -223,8 +224,11 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 			return code
 		}
 
-		// Delete old heartbeat before spawning
+		// Signals found before the spawn are stale: an earlier child left them
+		// and no launcher saw its exit.
 		deleteHeartbeat(l.cfg.DataDir)
+		deleteShutdownFile(l.cfg.DataDir)
+		deletePendingUpdate(l.cfg.DataDir)
 
 		if l.cfg.UI != nil {
 			msg := "Starting " + l.cfg.AppName
