@@ -241,6 +241,7 @@ launcher.Config{
     CrashWindow       time.Duration   // crash count resets after this (default: 5min)
     ProbationDuration time.Duration   // new version probation (default: 10min)
     KillTimeout       time.Duration   // SIGTERM -> SIGKILL escalation (default: 30s)
+    LauncherUpdateTimeout time.Duration // each wait of a launcher self-update (default: 30s)
 
     // Pluggable (all optional except Fetcher if you want updates)
     UI        UI          // nil = headless
@@ -273,6 +274,32 @@ launcher.Config{
 
 go-launcher logs via `log/slog`. Configure `slog.SetDefault()` before calling `Run()`.
 
+## Launcher Self-Update
+
+The launcher can also update itself. It is off by default. To turn it on:
+
+1. Set `Config.Version` to the launcher's own version.
+2. Implement `LauncherFetcher` on your `Fetcher`:
+
+   ```go
+   type LauncherFetcher interface {
+       LatestLauncher(ctx context.Context) (*Release, error)
+   }
+   ```
+
+   The launcher release is downloaded with `Fetcher.Download`.
+3. Call `Run` early in `main()`. The update starts the new launcher binary in a helper mode, and that process runs your `main()` up to `Run`.
+
+At start, the launcher asks for the latest launcher. If the version differs, it downloads the release next to itself as `<exe>.new`, verifies it, and starts it as a helper. The helper swaps the files, starts the new launcher and checks it. The old launcher keeps running until the new one is healthy. If the new launcher fails, the helper puts the old file back and the old launcher continues. The failed version is skipped until a different one is released.
+
+Rules for the releases:
+
+- **Return a sha256 checksum.** A launcher release without one is never installed.
+- **Take `Config.Version` and the version from `LatestLauncher` from one source**, for example the release tag. A release whose binary reports another version than announced is refused.
+- **Never return a version older than the first self-updating launcher.** An older launcher cannot update itself again.
+
+The plain binary is supported on Windows, Linux and macOS. A launcher inside a macOS `.app` bundle skips the update. The full design is in [docs/launcher-self-update.md](docs/launcher-self-update.md).
+
 ## Security
 
 go-launcher downloads binaries from the internet and executes them. The built-in fetchers enforce HTTPS. Downloaded artifacts are verified against SHA-256 checksums provided in the `Release.Checksum` field.
@@ -282,7 +309,7 @@ Code signing verification is not currently built in. If your threat model requir
 ## Limitations
 
 - **Single-unit child.** The child must be a single binary or a directory managed as an opaque unit.
-- **No self-update.** The launcher does not update itself. This is deliberate -- the launcher is a thin, stable binary that changes rarely. Update it via your installer or a manual download.
+- **Launcher self-update is opt-in and plain-binary only.** A launcher inside a macOS `.app` bundle does not update itself yet. Without `LauncherFetcher`, update the launcher via your installer.
 - **Full downloads only.** No delta/incremental updates. For most Go binaries (5-30MB), full downloads complete in seconds.
 - **No download resumption.** Interrupted downloads restart from the beginning.
 

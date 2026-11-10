@@ -84,6 +84,20 @@ func writeShutdownRequested(dataDir string) error {
 	return os.WriteFile(path, []byte(""), 0600)
 }
 
+// readLauncherReady reads launcher_ready. Returns nil if the file does not
+// exist or is malformed.
+func readLauncherReady(dataDir string) *launcherReady {
+	data, err := os.ReadFile(filepath.Join(dataDir, launcherReadyFile))
+	if err != nil {
+		return nil
+	}
+	var r launcherReady
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil
+	}
+	return &r
+}
+
 // writeLauncherReady atomically writes launcher_ready with the given version
 // and the current PID.
 func writeLauncherReady(dataDir, version string) error {

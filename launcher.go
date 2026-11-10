@@ -15,6 +15,7 @@ var (
 	defaultKillTimeout       = 30 * time.Second
 	defaultCrashWindow       = 5 * time.Minute
 	defaultHeartbeatPoll     = 500 * time.Millisecond
+	defaultLauncherUpdate    = 30 * time.Second
 )
 
 // Config configures the launcher behavior.
@@ -46,6 +47,11 @@ type Config struct {
 	ProbationDuration time.Duration   // new version probation (default: 10min)
 	KillTimeout       time.Duration   // SIGTERM → SIGKILL escalation (default: 30s)
 	HeartbeatPoll     time.Duration   // heartbeat check interval (default: 500ms)
+
+	// LauncherUpdateTimeout bounds each wait of a launcher self-update: a
+	// rename retry, the new launcher's launcher_ready, a stopped process to
+	// go. The whole update is bounded by multiples of it (default: 30s).
+	LauncherUpdateTimeout time.Duration
 
 	// Pluggable components.
 	UI        UI        // nil = headless
@@ -95,6 +101,9 @@ func New(cfg Config) *Launcher {
 	if cfg.HeartbeatPoll == 0 {
 		cfg.HeartbeatPoll = defaultHeartbeatPoll
 	}
+	if cfg.LauncherUpdateTimeout == 0 {
+		cfg.LauncherUpdateTimeout = defaultLauncherUpdate
+	}
 	return &Launcher{cfg: cfg}
 }
 
@@ -123,15 +132,12 @@ func (l *Launcher) Status() *State {
 
 // Run executes the main supervisor loop. Returns the process exit code.
 func (l *Launcher) Run(ctx context.Context) int {
-	// Self-relocate on first run
-	if l.cfg.InstallDir != "" {
-		relocated, err := selfRelocate(l.cfg.InstallDir, l.cfg.LauncherBinaryName, l.cfg.RelaunchArgs)
-		if err != nil {
-			slog.Error("self-relocation failed (continuing from current location)", "error", err)
-		}
-		if relocated {
-			return 0
-		}
+	if oldPID, ok := updateHelperParent(); ok {
+		return l.runHelper(oldPID)
+	}
+
+	if l.relocate() {
+		return 0
 	}
 
 	l.registerLoginItem()
@@ -169,7 +175,9 @@ func (l *Launcher) Run(ctx context.Context) int {
 	}
 
 	l.announceReady()
-	l.checkLauncherUpdate(ctx)
+	if l.checkLauncherUpdate(ctx) {
+		return 0
+	}
 
 	// Startup recovery
 	deleteStateTmpFiles(l.cfg.DataDir)
@@ -208,6 +216,19 @@ func (l *Launcher) Run(ctx context.Context) int {
 	}
 
 	return l.supervisorLoop(ctx)
+}
+
+// relocate moves the launcher to InstallDir on first run. It reports whether
+// a relocated copy was started and this process must exit.
+func (l *Launcher) relocate() bool {
+	if l.cfg.InstallDir == "" {
+		return false
+	}
+	relocated, err := selfRelocate(l.cfg.InstallDir, l.cfg.LauncherBinaryName, l.cfg.RelaunchArgs)
+	if err != nil {
+		slog.Error("self-relocation failed (continuing from current location)", "error", err)
+	}
+	return relocated
 }
 
 // announceReady logs the launcher's version and writes launcher_ready.

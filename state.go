@@ -17,6 +17,9 @@ type State struct {
 	CrashWindowStart time.Time `json:"crash_window_start"`
 	LastHealthyAt    time.Time `json:"last_healthy_at"`
 	RolledBackFrom   string    `json:"rolled_back_from"`
+	// FailedLauncherVersion is the last launcher release whose update failed.
+	// The launcher skips it until a different release is announced.
+	FailedLauncherVersion string `json:"failed_launcher_version"`
 }
 
 // resetCrashState clears crash tracking and probation fields.

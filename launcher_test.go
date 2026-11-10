@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -198,6 +199,25 @@ func TestStaleLockfileRecovery(t *testing.T) {
 		t.Fatalf("should acquire stale lockfile, got: %v", err)
 	}
 	lf.Release()
+}
+
+func TestLockfileTakeoverFromParent(t *testing.T) {
+	dataDir := t.TempDir()
+	lockPath := filepath.Join(dataDir, lockFileName)
+	parent := []byte(strconv.Itoa(os.Getppid()))
+	os.WriteFile(lockPath, parent, 0600)
+
+	lf := newLockfile(dataDir)
+	if err := lf.Acquire(); err != nil || lf.takenFrom != os.Getppid() {
+		t.Fatalf("expected to take the lock over from the parent, got takenFrom %d, err %v", lf.takenFrom, err)
+	}
+
+	// The lock now belongs to another process: Release must leave it.
+	os.WriteFile(lockPath, parent, 0600)
+	lf.Release()
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Errorf("Release removed a lock held by another process: %v", err)
+	}
 }
 
 func TestStateAtomicWriteAndLoad(t *testing.T) {
@@ -1020,19 +1040,21 @@ func TestStageLauncherUpdate(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		latest     Release
+		failed     string
 		wantStaged bool
 	}{
-		{"different version is staged", Release{Version: "2.0.0", Checksum: goodChecksum}, true},
-		{"same version ignoring v prefix is skipped", Release{Version: "v1.0.0", Checksum: goodChecksum}, false},
-		{"checksum mismatch leaves nothing", Release{Version: "2.0.0", Checksum: "sha256:00"}, false},
-		{"release without checksum is skipped", Release{Version: "2.0.0"}, false},
+		{"different version is staged", Release{Version: "2.0.0", Checksum: goodChecksum}, "", true},
+		{"same version ignoring v prefix is skipped", Release{Version: "v1.0.0", Checksum: goodChecksum}, "", false},
+		{"checksum mismatch leaves nothing", Release{Version: "2.0.0", Checksum: "sha256:00"}, "", false},
+		{"release without checksum is skipped", Release{Version: "2.0.0"}, "", false},
+		{"version that failed before is skipped", Release{Version: "2.0.0", Checksum: goodChecksum}, "v2.0.0", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lf := &fakeLauncherFetcher{fakeFetcher: fakeFetcher{binaryPath: src}, launcher: tc.latest}
 			cfg := Config{Version: "1.0.0", Fetcher: lf}
 			dest := filepath.Join(t.TempDir(), "launcher.new")
 
-			if staged := stageLauncherUpdate(context.Background(), &cfg, lf, dest); staged != tc.wantStaged {
+			if staged := stageLauncherUpdate(context.Background(), &cfg, lf, tc.failed, dest) != nil; staged != tc.wantStaged {
 				t.Fatalf("staged = %v, want %v", staged, tc.wantStaged)
 			}
 			got, err := os.ReadFile(dest)
