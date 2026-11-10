@@ -258,7 +258,10 @@ Tested on Windows 11 (build 26200):
 | `exe` can be replaced in one step while the old file runs and has a second name | ok |
 | The same in reverse while both processes run (ROLLBACK) | ok |
 | A file can be deleted when its process is gone | ok |
+| A file that another process has open for reading cannot be replaced; the replace works a moment later | refused, then ok |
 
 Tested on macOS: a program renamed its own running file and restored it. Linux follows the same rules as macOS.
+
+The second-to-last fact is why every rename is retried, including the atomic write of `launcher_ready`, which the helper reads while the new launcher writes it.
 
 Not tested: a virus scanner that holds a file during a rename.
