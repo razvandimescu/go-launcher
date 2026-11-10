@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-OUT="splash-demo.gif"
+OUT="docs/splash-demo.gif"
 FRAMES_DIR="/tmp/splash-frames"
 rm -rf "$FRAMES_DIR"
 mkdir -p "$FRAMES_DIR"
