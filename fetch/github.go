@@ -23,8 +23,8 @@ type githubFetcher struct {
 // Option configures a Fetcher.
 type Option func(any)
 
-// AssetPattern sets a glob-like pattern to match release asset filenames.
-// Supports "*" as a wildcard. Example: "my-app-*-amd64"
+// AssetPattern selects the release asset whose filename matches pattern, in
+// path.Match syntax. Example: "my-app-*-amd64"
 func AssetPattern(pattern string) Option {
 	return func(f any) {
 		if g, ok := f.(*githubFetcher); ok {
@@ -128,20 +128,14 @@ func (f *githubFetcher) matchAsset(assets []ghAsset) (*ghAsset, error) {
 	}
 
 	for i := range assets {
-		if matchPattern(f.assetPattern, assets[i].Name) {
+		matched, err := path.Match(f.assetPattern, assets[i].Name)
+		if err != nil {
+			return nil, fmt.Errorf("invalid asset pattern %q: %w", f.assetPattern, err)
+		}
+		if matched {
 			return &assets[i], nil
 		}
 	}
 
 	return nil, fmt.Errorf("no asset matching pattern %q", f.assetPattern)
-}
-
-// matchPattern performs simple glob matching with "*" wildcard support.
-func matchPattern(pattern, name string) bool {
-	matched, err := path.Match(pattern, name)
-	if err != nil {
-		// Fall back to contains check if pattern is invalid
-		return strings.Contains(name, strings.ReplaceAll(pattern, "*", ""))
-	}
-	return matched
 }

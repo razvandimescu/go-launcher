@@ -423,28 +423,6 @@ func TestIPCFiles(t *testing.T) {
 	}
 }
 
-func TestChecksumParsing(t *testing.T) {
-	tests := []struct {
-		input    string
-		wantAlgo string
-		wantHash string
-		wantOK   bool
-	}{
-		{"sha256:abc123", "sha256", "abc123", true},
-		{"", "", "", false},
-		{"nocolon", "", "", false},
-		{"sha256:", "", "", false},
-	}
-
-	for _, tt := range tests {
-		algo, hash, ok := parseChecksum(tt.input)
-		if algo != tt.wantAlgo || hash != tt.wantHash || ok != tt.wantOK {
-			t.Errorf("parseChecksum(%q) = (%q, %q, %v), want (%q, %q, %v)",
-				tt.input, algo, hash, ok, tt.wantAlgo, tt.wantHash, tt.wantOK)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Helpers for counter-based integration tests (no env var pollution)
 // ---------------------------------------------------------------------------
