@@ -206,12 +206,10 @@ Returns a silent no-op on Linux or when CGo is unavailable on macOS. Pass `nil` 
 type Registrar interface {
     RegisterLoginItem(binaryPath string) error
     UnregisterLoginItem() error
-    RegisterService(binaryPath string, args []string) error
-    UnregisterService() error
 }
 ```
 
-Handles OS-level registration (login items, system services). No built-in implementations yet — provide your own or pass `nil` to skip.
+Registers the launcher to start at user login. `registrar.New` implements it on macOS (LaunchAgent) and Windows (Run key), and is a no-op elsewhere. Pass `nil` to skip.
 
 ## Configuration
 

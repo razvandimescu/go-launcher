@@ -8,10 +8,8 @@ import (
 
 type countingRegistrar struct{ loginItems int }
 
-func (r *countingRegistrar) RegisterLoginItem(string) error         { r.loginItems++; return nil }
-func (r *countingRegistrar) UnregisterLoginItem() error             { return nil }
-func (r *countingRegistrar) RegisterService(string, []string) error { return nil }
-func (r *countingRegistrar) UnregisterService() error               { return nil }
+func (r *countingRegistrar) RegisterLoginItem(string) error { r.loginItems++; return nil }
+func (r *countingRegistrar) UnregisterLoginItem() error     { return nil }
 
 func TestOnlyTheLockHolderRegistersTheLoginItem(t *testing.T) {
 	cfg, dataDir := setupTestLauncher(t)

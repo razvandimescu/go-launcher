@@ -84,11 +84,3 @@ func (r *darwinRegistrar) UnregisterLoginItem() error {
 	}
 	return err
 }
-
-func (r *darwinRegistrar) RegisterService(binaryPath string, args []string) error {
-	return fmt.Errorf("registrar: macOS service registration not yet implemented")
-}
-
-func (r *darwinRegistrar) UnregisterService() error {
-	return fmt.Errorf("registrar: macOS service unregistration not yet implemented")
-}
