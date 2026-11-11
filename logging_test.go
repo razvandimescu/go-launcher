@@ -55,11 +55,6 @@ func TestSetupFileLoggingAppendsToSmallFile(t *testing.T) {
 	}
 }
 
-func TestSetupFileLoggingEmptyPathIsNoop(t *testing.T) {
-	// Empty path must not panic and must return a usable closer.
-	setupFileLogging("")()
-}
-
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) {

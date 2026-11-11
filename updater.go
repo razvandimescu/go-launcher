@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"hash"
 	"io"
 	"log/slog"
 	"os"
@@ -15,10 +14,6 @@ import (
 
 // bootstrapDownload downloads the latest child binary into versions/current/.
 func bootstrapDownload(ctx context.Context, cfg *Config) error {
-	if cfg.Fetcher == nil {
-		return fmt.Errorf("no fetcher configured, cannot bootstrap")
-	}
-
 	release, err := cfg.Fetcher.LatestVersion(ctx)
 	if err != nil {
 		return fmt.Errorf("fetch latest version: %w", err)
@@ -33,10 +28,6 @@ func bootstrapDownload(ctx context.Context, cfg *Config) error {
 	// current/ may exist empty after an interrupted install — Rename won't overwrite it.
 	cur := currentVersionDir(cfg.DataDir)
 	stg := stagingVersionDir(cfg.DataDir)
-
-	if err := ensureVersionDirs(cfg.DataDir); err != nil {
-		return fmt.Errorf("create versions dir: %w", err)
-	}
 
 	if err := os.RemoveAll(cur); err != nil {
 		return fmt.Errorf("remove stale current: %w", err)
@@ -82,18 +73,11 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 		return fmt.Errorf("create staging file: %w", err)
 	}
 
-	var w io.Writer = f
-	var hasher *checksumWriter
-
-	// Set up checksum verification if provided
-	if algo, hash, ok := parseChecksum(release.Checksum); ok && algo == "sha256" {
-		hasher = &checksumWriter{
-			writer:   f,
-			hasher:   sha256.New(),
-			expected: hash,
-		}
-		w = hasher
+	want := ""
+	if algo, sum, ok := parseChecksum(release.Checksum); ok && algo == "sha256" {
+		want = sum
 	}
+	hasher := sha256.New()
 
 	progress := func(pct float64) {
 		if cfg.UI != nil {
@@ -102,7 +86,7 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 		}
 	}
 
-	if err := cfg.Fetcher.Download(ctx, release, w, progress); err != nil {
+	if err := cfg.Fetcher.Download(ctx, release, io.MultiWriter(f, hasher), progress); err != nil {
 		f.Close()
 		os.RemoveAll(stgDir)
 		return fmt.Errorf("download: %w", err)
@@ -113,12 +97,11 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 		return fmt.Errorf("close staging file: %w", err)
 	}
 
-	// Verify checksum
-	if hasher != nil {
-		actual := hex.EncodeToString(hasher.hasher.Sum(nil))
-		if actual != hasher.expected {
+	if want != "" {
+		actual := hex.EncodeToString(hasher.Sum(nil))
+		if actual != want {
 			os.RemoveAll(stgDir)
-			return fmt.Errorf("checksum mismatch: expected %s, got %s", hasher.expected, actual)
+			return fmt.Errorf("checksum mismatch: expected %s, got %s", want, actual)
 		}
 		slog.Info("checksum verified", "algo", "sha256")
 	}
@@ -130,20 +113,6 @@ func downloadToStaging(ctx context.Context, cfg *Config, release *Release) error
 	}
 
 	return nil
-}
-
-type checksumWriter struct {
-	writer   io.Writer
-	hasher   hash.Hash
-	expected string
-}
-
-func (cw *checksumWriter) Write(p []byte) (int, error) {
-	n, err := cw.writer.Write(p)
-	if n > 0 {
-		cw.hasher.Write(p[:n])
-	}
-	return n, err
 }
 
 // parseChecksum splits "sha256:abc123" into ("sha256", "abc123", true).

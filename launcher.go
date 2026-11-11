@@ -172,7 +172,6 @@ func (l *Launcher) Run(ctx context.Context) int {
 	}
 
 	// Startup recovery
-	deleteStateTmpFiles(l.cfg.DataDir)
 	cleanStagingDir(l.cfg.DataDir)
 	recoverInterruptedSwap(l.cfg.DataDir)
 
@@ -185,7 +184,7 @@ func (l *Launcher) Run(ctx context.Context) int {
 	}
 
 	// Bootstrap download if no current version
-	if !hasCurrentVersion(l.cfg.DataDir) {
+	if !hasEntries(currentVersionDir(l.cfg.DataDir)) {
 		if l.cfg.Fetcher == nil {
 			slog.Error("no child binary and no fetcher configured")
 			if l.cfg.UI != nil {
@@ -215,13 +214,12 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 
 	for {
 		// Check crash threshold
-		action, code := l.handleCrashThreshold()
-		switch action {
+		switch l.handleCrashThreshold() {
 		case actionRolledBack:
 			crashIndex = 0
 			continue
 		case actionFatal:
-			return code
+			return 1
 		}
 
 		// Signals found before the spawn are stale: an earlier child left them
@@ -272,14 +270,12 @@ func (l *Launcher) supervisorLoop(ctx context.Context) int {
 				continue
 			}
 			slog.Info("child requested clean shutdown")
-			deleteShutdownFile(l.cfg.DataDir)
 			return 0
 		}
 
 		// No shutdown_requested — treat as crash regardless of exit code
 		slog.Warn("child exited unexpectedly", "exit_code", exitCode,
 			"runtime", child.WallRuntime())
-		deletePendingUpdate(l.cfg.DataDir)
 		l.recordCrash()
 		crashIndex = l.sleepBackoff(ctx, crashIndex)
 	}
@@ -302,9 +298,9 @@ const (
 	updateNotApplied                     // download failed; current version kept
 )
 
-func (l *Launcher) handleCrashThreshold() (crashAction, int) {
+func (l *Launcher) handleCrashThreshold() crashAction {
 	if l.state.CrashCount < l.cfg.CrashThreshold {
-		return actionContinue, 0
+		return actionContinue
 	}
 
 	// RolledBackFrom == "" means we have never rolled back, so a previous
@@ -313,7 +309,7 @@ func (l *Launcher) handleCrashThreshold() (crashAction, int) {
 	// has RolledBackFrom == PreviousVersion == "" and the guard would
 	// wrongly skip a perfectly good previous/ binary, exiting forever.
 	rollbackAllowed := l.state.RolledBackFrom == "" || l.state.RolledBackFrom != l.state.PreviousVersion
-	if hasPreviousVersion(l.cfg.DataDir) && rollbackAllowed {
+	if hasEntries(previousVersionDir(l.cfg.DataDir)) && rollbackAllowed {
 		slog.Warn("crash threshold reached, rolling back",
 			"crash_count", l.state.CrashCount,
 			"from", l.state.CurrentVersion,
@@ -325,19 +321,17 @@ func (l *Launcher) handleCrashThreshold() (crashAction, int) {
 
 		if err := rollback(l.cfg.DataDir); err != nil {
 			slog.Error("rollback failed", "error", err)
-			return actionFatal, 1
+			return actionFatal
 		}
 
-		l.state.RolledBackFrom = l.state.CurrentVersion
 		l.state.CurrentVersion, l.state.PreviousVersion = l.state.PreviousVersion, l.state.CurrentVersion
-		l.state.CrashCount = 0
-		l.state.CrashWindowStart = time.Time{}
-		l.state.ProbationUntil = time.Time{}
+		l.state.resetCrashState()
+		l.state.RolledBackFrom = l.state.PreviousVersion
 
 		if err := saveState(l.cfg.DataDir, l.state); err != nil {
 			slog.Error("failed to save state after rollback", "error", err)
 		}
-		return actionRolledBack, 0
+		return actionRolledBack
 	}
 
 	slog.Error("crash loop with no viable rollback target",
@@ -345,7 +339,7 @@ func (l *Launcher) handleCrashThreshold() (crashAction, int) {
 	if l.cfg.UI != nil {
 		l.cfg.UI.ShowError(l.cfg.AppName + " is unable to start. Please reinstall or contact support.")
 	}
-	return actionFatal, 1
+	return actionFatal
 }
 
 func (l *Launcher) checkProbation(child *childProcess) {
@@ -375,9 +369,6 @@ func (l *Launcher) handleUpdate(ctx context.Context) updateAction {
 	if pending == nil {
 		return updateNone
 	}
-	// Deferred so each branch below states only its distinguishing logic.
-	defer deletePendingUpdate(l.cfg.DataDir)
-	defer deleteShutdownFile(l.cfg.DataDir)
 
 	slog.Info("child requested update", "version", pending.Version)
 
@@ -387,7 +378,6 @@ func (l *Launcher) handleUpdate(ctx context.Context) updateAction {
 
 	if err := performUpdate(ctx, &l.cfg, pending); err != nil {
 		slog.Error("update failed, restarting current version", "error", err)
-		cleanStagingDir(l.cfg.DataDir)
 		return updateNotApplied
 	}
 

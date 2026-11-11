@@ -28,11 +28,8 @@ func (b bestEffortWriter) Write(p []byte) (int, error) {
 // discarded — a file is the only record of bootstrap/update failures. The file
 // is rotated once at startup if it has grown past logFileMaxBytes, bounding
 // on-disk size to roughly 2×. Returns a closer that restores the previous
-// default logger; safe with an empty path.
+// default logger.
 func setupFileLogging(path string) func() {
-	if path == "" {
-		return func() {}
-	}
 	if fi, err := os.Stat(path); err == nil && fi.Size() > logFileMaxBytes {
 		if err := os.Rename(path, path+".1"); err != nil {
 			slog.Warn("log rotation failed, file may grow unbounded", "path", path, "error", err)
