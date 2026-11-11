@@ -10,7 +10,7 @@ The [Squirrel.Windows](https://github.com/Squirrel/Squirrel.Windows) pattern for
 **[Website](https://razvandimescu.github.io/go-launcher/)** | **[Go Docs](https://pkg.go.dev/github.com/razvandimescu/go-launcher)**
 
 <p align="center">
-  <img src="splash-demo.gif" alt="Native macOS splash screen with animated spinner, progress bar, and status text" width="340">
+  <img src="docs/splash-demo.gif" alt="Native macOS splash screen with animated spinner, progress bar, and status text" width="340">
   <br>
   <sub>Built-in native splash screen (macOS Cocoa/AppKit) -- no competing Go update library offers this.</sub>
 </p>
